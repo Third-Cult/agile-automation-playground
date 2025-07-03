@@ -1,0 +1,121 @@
+name: Validate Feature Request
+
+on:
+  issues:
+    types: [opened]
+
+jobs:
+  validate:
+    if: contains(github.event.issue.labels.*.name, '_auto-feature')
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+
+    steps:
+      - name: Validate required sections in feature request
+        uses: actions/github-script@v7
+        with:
+          script: |
+            # Get the information of the ticket itself
+            const body = context.payload.issue.body;
+            const issue_number = context.payload.issue.number;
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+
+            # Here you can adjust the variables for conditions and logic
+            const minLength = 25;
+            const labels_to_add = ['needs-more-info']
+            const labels_to_remove = ['_auto-feature']
+
+            # Identify the sections to check min length & associate values to it
+            const sections = {
+              "Problem Statement / Background": minLength,
+              "Goals / Outcomes": minLength
+            };
+
+            # Store any problems that come up
+            const problems = [];
+
+            # For each section outlined above
+            for (const [section, minLen] of Object.entries(sections)) {
+              # Pull out the body of the section for analysis
+              const regex = new RegExp(`###\\s*${section}[\\s\\S]*?(?=###|$)`, 'i');
+              const match = body.match(regex);
+
+              # If there is no match found - throw a problem
+              if (!match) {
+                problems.push(`- Missing required section: **${section}**`);
+              } else {
+                # Parse out the body - trimming
+                const content = match[0].replace(/^###\s*[^\n]+\n/, '').trim();
+                
+                # If the body is too short - throw a probelem with relevant information
+                if (content.length < minLen) {
+                  problems.push(`- **${section}** is too short (minimum ${minLen} characters)`);
+                }
+              }
+            }
+
+            # If there are problems - create a message with the found problems and post a comment
+            if (problems.length > 0) {
+              const message = `
+              **Feature Request Validation Failed**
+              
+              The following issues were found in this ticket:
+              ${problems.join('\n')}
+              
+              Please edit the issue to include or expand the required sections.
+              `;
+
+              try {
+                await github.rest.issues.createComment({
+                  owner,
+                  repo,
+                  issue_number,
+                  body: message,
+                });
+                console.log('✅ Created Comment: Success');
+              } catch (error) {
+                if (error.status === 404) {
+                  console.log(`⚠️ Failed to generate comment: '${message}'`);
+                } else {
+                  throw error;
+                }
+              }
+
+              # Add relevant labels
+              try {
+                await github.rest.issues.addLabels({
+                owner,
+                repo,
+                issue_number,
+                labels: labels_to_add,
+                });
+                console.log(`✅ Created Label: '${labels_to_add}'`);
+              } catch (error) {
+                if (error.status === 404) {
+                  console.log(`⚠️ Failed to apply label: '${labels_to_add}'`);
+                } else {
+                  throw error;
+                }
+              }
+            }
+
+              # Remove the labels to mark this action was complete
+              for (const label of labels_to_remove) {
+                try {
+                    await github.rest.issues.removeLabel({
+                    owner,
+                    repo,
+                    issue_number,
+                    name: labels_to_remove,
+                    });
+                    console.log(`✅ Removed Label: '${label}'`);
+                } catch (error) {
+                    if (error.status === 404) {
+                    console.log(`⚠️ Failed to remove label: '${label}'`);
+                    } else {
+                    throw error;
+                    }
+                }
+              }
+            
