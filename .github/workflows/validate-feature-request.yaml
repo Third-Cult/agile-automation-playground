@@ -15,47 +15,47 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
-            # Get the information of the ticket itself
+            // Get the information of the ticket itself
             const body = context.payload.issue.body;
             const issue_number = context.payload.issue.number;
             const owner = context.repo.owner;
             const repo = context.repo.repo;
 
-            # Here you can adjust the variables for conditions and logic
+            // Here you can adjust the variables for conditions and logic
             const minLength = 25;
             const labels_to_add = ['needs-more-info']
             const labels_to_remove = ['_auto-feature']
 
-            # Identify the sections to check min length & associate values to it
+            // Identify the sections to check min length & associate values to it
             const sections = {
               "Problem Statement / Background": minLength,
               "Goals / Outcomes": minLength
             };
 
-            # Store any problems that come up
+            // Store any problems that come up
             const problems = [];
 
-            # For each section outlined above
+            // For each section outlined above
             for (const [section, minLen] of Object.entries(sections)) {
-              # Pull out the body of the section for analysis
+              // Pull out the body of the section for analysis
               const regex = new RegExp(`###\\s*${section}[\\s\\S]*?(?=###|$)`, 'i');
               const match = body.match(regex);
 
-              # If there is no match found - throw a problem
+              // If there is no match found - throw a problem
               if (!match) {
                 problems.push(`- Missing required section: **${section}**`);
               } else {
-                # Parse out the body - trimming
+                // Parse out the body - trimming
                 const content = match[0].replace(/^###\s*[^\n]+\n/, '').trim();
                 
-                # If the body is too short - throw a probelem with relevant information
+                // If the body is too short - throw a probelem with relevant information
                 if (content.length < minLen) {
                   problems.push(`- **${section}** is too short (minimum ${minLen} characters)`);
                 }
               }
             }
 
-            # If there are problems - create a message with the found problems and post a comment
+            // If there are problems - create a message with the found problems and post a comment
             if (problems.length > 0) {
               const message = `
               **Feature Request Validation Failed**
@@ -82,7 +82,7 @@ jobs:
                 }
               }
 
-              # Add relevant labels
+              // Add relevant labels
               try {
                 await github.rest.issues.addLabels({
                 owner,
@@ -100,7 +100,7 @@ jobs:
               }
             }
 
-              # Remove the labels to mark this action was complete
+              // Remove the labels to mark this action was complete
               for (const label of labels_to_remove) {
                 try {
                     await github.rest.issues.removeLabel({
