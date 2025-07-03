@@ -1,0 +1,34 @@
+name: 📜 Feature Request 📜
+description: Want to see something new in the product? Articulate it here!
+title: "< Put Title Here >"
+type: "Feature"
+labels: ["needs-triage", "_auto-feature"]
+body:
+- type: textarea
+  attributes:
+    label: Problem Statement / Background
+    description: |
+      - What problem is being solved?
+      - Why is this needed (user friction, business impact, etc.)
+      - Link to any user feedback/research or related tickets, if relevant
+    placeholder: A clear definition of 'why' will help contextualize discussions and influence solutions.
+  validations:
+    required: true
+- type: textarea
+  attributes:
+    label: Goals / Outcomes
+    description: |
+      - What are the expected outcomes of this feature?
+      - How do we know it's successful?
+    placeholder: Knowing what the end goal is and how to evaluate success makes planning out implementation easier.
+  validations:
+    required: true
+- type: textarea
+  attributes:
+    label: User Stories
+    description: |
+      (Optional) Provide user stories to articulate specific user flows this feature needs to consider.
+      _Format: As a [type of user], I want to [action], so that [benefit]._
+    placeholder: As a [type of user], I want to [action], so that [benefit].
+  validations:
+    required: false
