@@ -1,0 +1,107 @@
+name: Validate Feature Request
+
+on:
+  issues:
+    types: [opened]
+
+jobs:
+  validate:
+    if: contains(github.event.issue.labels.*.name, '_auto-feature')
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+
+    steps:
+      - name: Validate required sections in feature request
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const body = context.payload.issue.body;
+            const issue_number = context.payload.issue.number;
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+
+            const minLength = 25;
+
+            const sections = {
+              "Problem Statement / Background": minLength,
+              "Goals / Outcomes": minLength
+            };
+
+            const problems = [];
+
+            for (const [section, minLen] of Object.entries(sections)) {
+              const regex = new RegExp(`###\\s*${section}[\\s\\S]*?(?=###|$)`, 'i');
+              const match = body.match(regex);
+
+              if (!match) {
+                problems.push(`- Missing required section: **${section}**`);
+              } else {
+                const content = match[0].replace(/^###\s*[^\n]+\n/, '').trim();
+                if (content.length < minLen) {
+                  problems.push(`- **${section}** is too short (minimum ${minLen} characters)`);
+                }
+              }
+            }
+
+            if (problems.length > 0) {
+              const message = `
+              **Feature Request Validation Failed**
+              
+              The following issues were found in this ticket:
+              ${problems.join('\n')}
+              
+              Please edit the issue to include or expand the required sections.
+              `;
+
+              try {
+                await github.rest.issues.createComment({
+                  owner,
+                  repo,
+                  issue_number,
+                  body: message,
+                });
+                console.log('✅ Created Comment: Success');
+              } catch (error) {
+                if (error.status === 404) {
+                  console.log(`⚠️ Failed to generate comment: '${message}'`);
+                } else {
+                  throw error;
+                }
+              }
+
+              try {
+                const labelsToAdd = ['needs-more-info']
+                
+                await github.rest.issues.addLabels({
+                owner,
+                repo,
+                issue_number,
+                labels: labelsToAdd,
+                });
+                console.log(`✅ Created Label: '${labelsToAdd}'`);
+              } catch (error) {
+                if (error.status === 404) {
+                  console.log(`⚠️ Failed to apply label: '${labelsToAdd}'`);
+                } else {
+                  throw error;
+                }
+              }
+            }
+
+              try {
+                const labelToRemove = '_auto-feature'
+                await github.rest.issues.removeLabel({
+                  owner,
+                  repo,
+                  issue_number,
+                  name: labelToRemove,
+                });
+                console.log(`✅ Removed Label: '${labelToRemove}'`);
+              } catch (error) {
+                if (error.status === 404) {
+                  console.log(`⚠️ Failed to remove label: '${labelToRemove}'`);
+                } else {
+                  throw error;
+                }
+              }
+            
