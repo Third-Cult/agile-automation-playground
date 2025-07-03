@@ -6,7 +6,7 @@ on:
 
 jobs:
   validate:
-    if: contains(github.event.issue.labels.*.name, '_auto-feature')
+    if: contains(github.event.issue.body, '📜 Feature Request 📜')
     runs-on: ubuntu-latest
     timeout-minutes: 1
 
@@ -22,9 +22,9 @@ jobs:
             const repo = context.repo.repo;
 
             // Here you can adjust the variables for conditions and logic
-            const minLength = 25;
-            const labels_to_add = ['needs-more-info']
-            const labels_to_remove = ['_auto-feature']
+            const minLength = 25;                       // Minimum length that the sections have to metch
+            const labels_to_add = ['needs-more-info']   // Labels to add if there is an error
+            const labels_to_remove = []                 // Labels to remove after running the github action
 
             // Identify the sections to check min length & associate values to it
             const sections = {
