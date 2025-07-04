@@ -70,8 +70,6 @@ body:
       - 🟡 P2
       - 🟢 P3
       - ⚪ P4
-    validations:
-      required: false
 - type: dropdown
   id: impact
   attributes:
