@@ -1,7 +1,8 @@
 name: 📜 Feature/Enhancement Request 📜
 description: Want to see something new in the product? Want to see any adjustment to what's already there? Articulate it here!
 title: "< Put Title Here >"
-type: "Feature"
+labels:
+  - type: "Feature"
 body:
 - type: markdown
   id: feature_request
