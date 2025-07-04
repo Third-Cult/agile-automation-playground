@@ -1,30 +1,82 @@
-name: Validate Feature Request
-
+name: Default Ticket Creation
 on:
   issues:
     types: [opened]
 
 jobs:
-  validate:
-    if: contains(github.event.issue.body, '📜 Feature Request 📜')
+  # Adds all tickets into the default project for simple storage
+  add-to-default-project:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Add issues to the default project
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.PROJECT_PAT }}
+          script: |
+            const projectId = 'PVT_kwDODMXHZ84A9Dvi'; // Replace with your project ID
+            const issueNodeId = context.payload.issue.node_id;
+
+            const result = await github.graphql(`
+              mutation($projectId: ID!, $contentId: ID!) {
+                addProjectV2ItemById(input: {
+                  projectId: $projectId,
+                  contentId: $contentId
+                }) {
+                  item {
+                    id
+                  }
+                }
+              }
+            `, {
+              projectId,
+              contentId: issueNodeId
+            });
+
+            console.log("✅ Issue added to project:", result.addProjectV2ItemById.item.id);
+  
+  # Adds the initial labels that all tickets have assigned to them (i.e., needs-triage)
+  add-default-labels:
+    needs: add-to-default-project 
+    runs-on: ubuntu-latest
+    steps:
+    - name: Add labels to the ticket
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const labels_to_add = ['needs-triage']   // Labels to add if there is an error
+
+          try {
+              await github.rest.issues.addLabels({
+              owner,
+              repo,
+              issue_number,
+              labels: labels_to_add,
+              });
+              console.log(`✅ Created Labels: '${labels_to_add}'`);
+            } catch (error) {
+              if (error.status === 404) {
+                console.log(`⚠️ Failed to apply labels: '${labels_to_add}'`);
+              } else {
+                throw error;
+              }
+            }
+          }
+
+  # ISSUE TYPE VALIDATIONS
+  validate-feature-type:
+    needs: add-default-labels
+    if: contains(github.event.issue.body, '📜 Feature/Enhancement Request 📜')
     runs-on: ubuntu-latest
     timeout-minutes: 1
 
     steps:
-      - name: Validate required sections in feature request
+      - name: Define the variables used in conditionals and ticket adjustment
         uses: actions/github-script@v7
         with:
           script: |
-            // Get the information of the ticket itself
-            const body = context.payload.issue.body;
-            const issue_number = context.payload.issue.number;
-            const owner = context.repo.owner;
-            const repo = context.repo.repo;
-
             // Here you can adjust the variables for conditions and logic
             const minLength = 25;                       // Minimum length that the sections have to metch
             const labels_to_add = ['needs-more-info']   // Labels to add if there is an error
-            const labels_to_remove = []                 // Labels to remove after running the github action
 
             // Identify the sections to check min length & associate values to it
             const sections = {
@@ -34,7 +86,21 @@ jobs:
 
             // Store any problems that come up
             const problems = [];
-
+            
+      - name: Pull out the information from the ticket
+        uses: actions/github-script@v7
+        with:
+          script: |
+            // Get the information of the ticket itself
+            const body = context.payload.issue.body;
+            const issue_number = context.payload.issue.number;
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            
+      - name: Perform validation logic - minimum length of highlighted sections
+        uses: actions/github-script@v7
+        with:
+          script: |
             // For each section outlined above
             for (const [section, minLen] of Object.entries(sections)) {
               // Pull out the body of the section for analysis
@@ -55,6 +121,10 @@ jobs:
               }
             }
 
+      - name: Communicate identified issues via comments & labels
+        uses: actions/github-script@v7
+        with:
+          script: |
             // If there are problems - create a message with the found problems and post a comment
             if (problems.length > 0) {
               const message = `
@@ -99,23 +169,3 @@ jobs:
                 }
               }
             }
-
-              // Remove the labels to mark this action was complete
-              for (const label of labels_to_remove) {
-                try {
-                    await github.rest.issues.removeLabel({
-                    owner,
-                    repo,
-                    issue_number,
-                    name: labels_to_remove,
-                    });
-                    console.log(`✅ Removed Label: '${label}'`);
-                } catch (error) {
-                    if (error.status === 404) {
-                    console.log(`⚠️ Failed to remove label: '${label}'`);
-                    } else {
-                    throw error;
-                    }
-                }
-              }
-            
