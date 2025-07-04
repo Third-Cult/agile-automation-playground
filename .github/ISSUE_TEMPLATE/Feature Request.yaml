@@ -3,12 +3,6 @@ description: Want to see something new in the product? Want to see any adjustmen
 title: "< Put Title Here >"
 type: "Feature"
 body:
-- type: markdown
-  id: feature_request
-  attributes:
-    value: |
-    # 📜 Feature/Enhancement Request 📜
-     Want to see something new in the product? Want to see any adjustment to what's already there? Articulate it here!
 - type: textarea
   id: problem
   attributes:
