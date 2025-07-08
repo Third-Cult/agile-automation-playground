@@ -17,55 +17,67 @@ jobs:
       pull-requests: write
 
     steps:
-      - name: Add validated labels to issue or PR
+      - name: Get all the relevant information
         uses: actions/github-script@v7
         with:
           script: |
-            try {
-              const input = '${{ inputs.labels }}';
-              const labelsToAdd = input.split(',').map(l => l.trim()).filter(Boolean);
-              const { owner, repo } = context.repo;
-              const issueNumber = context.issue.number;
+            const input = '${{ inputs.labels }}';
+            const labelsToAdd = input.split(',').map(l => l.trim()).filter(Boolean);
+            const { owner, repo } = context.repo;
+            const issueNumber = context.issue.number;
 
-              if (!issueNumber) {
-                core.setFailed("🚨 ERROR: No issue or pull request number found in context.");
+      - name: Check if the issue/PR is valid
+        uses: actions/github-script@v7
+        with:
+          script: |
+            if (!issueNumber) {
+              core.setFailed("🚨 ERROR: No issue or pull request number found in context.");
+              return;
+            }
+
+      - name: Request the labels from the repository
+        uses: actions/github-script@v7
+        with:
+          script: |
+            core.info(`ℹ️ INFO: Requested labels: ${labelsToAdd.join(', ')}`);
+
+            let existingLabels = [];
+            try {
+              const res = await github.rest.issues.listLabelsForRepo({ owner, repo });
+              existingLabels = res.data.map(label => label.name);
+            } catch (error) {
+              core.warning(`🚨 ERROR: Could not fetch existing labels: ${error.message}`);
+              throw error;
+            }
+
+      - name: Determine which labels are valid (if any) and add them
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const validLabels = labelsToAdd.filter(label => existingLabels.includes(label));
+            const invalidLabels = labelsToAdd.filter(label => !existingLabels.includes(label));
+
+            if (validLabels.length === 0) {
+              core.warning("🚨 ERROR: None of the provided labels exist in the repo.");
+            } else {
+              try {
+                await github.rest.issues.addLabels({
+                  owner,
+                  repo,
+                  issue_number: issueNumber,
+                  labels: validLabels,
+                });
+                core.info(`✅ SUCCESS: Added labels: ${validLabels.join(', ')}`);
+              } catch (error) {
+                core.setFailed(`🚨 ERROR: Failed to apply labels: ${error.message}`);
                 return;
               }
+            }
 
-              core.info(`ℹ️ INFO: Requested labels: ${labelsToAdd.join(', ')}`);
-
-              let existingLabels = [];
-              try {
-                const res = await github.rest.issues.listLabelsForRepo({ owner, repo });
-                existingLabels = res.data.map(label => label.name);
-              } catch (error) {
-                core.warning(`🚨 ERROR: Could not fetch existing labels: ${error.message}`);
-                throw error;
-              }
-
-              const validLabels = labelsToAdd.filter(label => existingLabels.includes(label));
-              const invalidLabels = labelsToAdd.filter(label => !existingLabels.includes(label));
-
-              if (validLabels.length === 0) {
-                core.warning("🚨 ERROR: None of the provided labels exist in the repo.");
-              } else {
-                try {
-                  await github.rest.issues.addLabels({
-                    owner,
-                    repo,
-                    issue_number: issueNumber,
-                    labels: validLabels,
-                  });
-                  core.info(`✅ SUCCESS: Added labels: ${validLabels.join(', ')}`);
-                } catch (error) {
-                  core.setFailed(`🚨 ERROR: Failed to apply labels: ${error.message}`);
-                  return;
-                }
-              }
-
-              if (invalidLabels.length > 0) {
-                core.warning(`ℹ️ INFO: These labels do not exist in the repo: ${invalidLabels.join(', ')}`);
-              }
-            } catch (error) {
-              core.setFailed(`🚨 ERROR: Unexpected failure: ${error.message}`);
+      - name: Document which labels were invalid
+        uses: actions/github-script@v7
+        with:
+          script: |
+            if (invalidLabels.length > 0) {
+              core.warning(`ℹ️ INFO: These labels do not exist in the repo: ${invalidLabels.join(', ')}`);
             }
