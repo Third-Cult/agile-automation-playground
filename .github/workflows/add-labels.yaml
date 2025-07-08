@@ -39,7 +39,7 @@ jobs:
                 const res = await github.rest.issues.listLabelsForRepo({ owner, repo });
                 existingLabels = res.data.map(label => label.name);
               } catch (error) {
-                core.warning(`🚨 ERROR: Could not fetch existing labels: ${(error as Error).message}`);
+                core.warning(`🚨 ERROR: Could not fetch existing labels: ${error.message}`);
                 throw error;
               }
 
@@ -58,7 +58,7 @@ jobs:
                   });
                   core.info(`✅ SUCCESS: Added labels: ${validLabels.join(', ')}`);
                 } catch (error) {
-                  core.setFailed(`🚨 ERROR: Failed to apply labels: ${(error as Error).message}`);
+                  core.setFailed(`🚨 ERROR: Failed to apply labels: ${error.message}`);
                   return;
                 }
               }
@@ -66,6 +66,6 @@ jobs:
               if (invalidLabels.length > 0) {
                 core.warning(`ℹ️ INFO: These labels do not exist in the repo: ${invalidLabels.join(', ')}`);
               }
-            } catch (err) {
-              core.setFailed(`🚨 ERROR: Unexpected failure: ${(err as Error).message}`);
+            } catch (error) {
+              core.setFailed(`🚨 ERROR: Unexpected failure: ${error.message}`);
             }
