@@ -6,33 +6,12 @@ on:
 jobs:
   # Adds all tickets into the default project for simple storage
   add-to-default-project:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Add issues to the default project
-        uses: actions/github-script@v7
-        with:
-          github-token: ${{ secrets.PROJECT_PAT }}
-          script: |
-            const projectId = 'PVT_kwDODMXHZ84A9Dvi'; // Replace with your project ID
-            const issueNodeId = context.payload.issue.node_id;
+    uses: ./.github/workflows/add-to-default-project.yaml
+    with:
+      project-id: "PVT_kwDODMXHZ84A9Dvi"
+    secrets:
+      token: ${{ secrets.PROJECT_PAT }}
 
-            const result = await github.graphql(`
-              mutation($projectId: ID!, $contentId: ID!) {
-                addProjectV2ItemById(input: {
-                  projectId: $projectId,
-                  contentId: $contentId
-                }) {
-                  item {
-                    id
-                  }
-                }
-              }
-            `, {
-              projectId,
-              contentId: issueNodeId
-            });
-
-            console.log("✅ Issue added to project:", result.addProjectV2ItemById.item.id);
   
   # Adds the initial labels that all tickets have assigned to them (i.e., needs-triage)
   add-default-labels:

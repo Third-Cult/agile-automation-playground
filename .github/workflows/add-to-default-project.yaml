@@ -1,0 +1,62 @@
+name: Add to Default Project
+
+on:
+  workflow_call:
+    inputs:
+      project-id:
+        description: "Project ID to add issue to"
+        required: true
+        type: string
+    secrets:
+      token:
+        description: "GitHub token with project write access"
+        required: true
+
+jobs:
+  add-to-project:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Add issue to project
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.token }}
+          script: |
+            try {
+              const projectId = '${{ inputs.project-id }}';
+              const issueNodeId = context.payload?.issue?.node_id;
+
+              if (!projectId || !issueNodeId) {
+                core.setFailed(`🚨 ERROR: Missing required values: projectId=${projectId}, issueNodeId=${issueNodeId}`);
+                return;
+              }
+
+              core.info(`ℹ️ INFO: Attempting to add issue node '${issueNodeId}' to project '${projectId}'`);
+
+              const result = await github.graphql(`
+                mutation($projectId: ID!, $contentId: ID!) {
+                  addProjectV2ItemById(input: {
+                    projectId: $projectId,
+                    contentId: $contentId
+                  }) {
+                    item {
+                      id
+                    }
+                  }
+                }
+              `, {
+                projectId,
+                contentId: issueNodeId
+              });
+
+              const addedId = result?.addProjectV2ItemById?.item?.id;
+
+              if (addedId) {
+                core.info(`✅ SUCCESS: Issue added to project successfully. Item ID: ${addedId}`);
+              } else {
+                core.warning("⚠️ WARNING: Mutation succeeded but no item ID was returned.");
+              }
+
+            } catch (error) {
+              core.setFailed(`🚨 ERROR: Failed to add issue to project: ${error.message}`);
+            }
