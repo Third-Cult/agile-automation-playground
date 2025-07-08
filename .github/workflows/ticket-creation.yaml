@@ -37,30 +37,10 @@ jobs:
   # Adds the initial labels that all tickets have assigned to them (i.e., needs-triage)
   add-default-labels:
     needs: add-to-default-project 
-    runs-on: ubuntu-latest
-    steps:
-    - name: Add labels to the ticket
-      uses: actions/github-script@v7
-      with:
-        script: |
-          const labels_to_add = ['needs-triage']   // Labels to add if there is an error
-
-          try {
-              await github.rest.issues.addLabels({
-              owner,
-              repo,
-              issue_number,
-              labels: labels_to_add,
-              });
-              console.log(`✅ Created Labels: '${labels_to_add}'`);
-            } catch (error) {
-              if (error.status === 404) {
-                console.log(`⚠️ Failed to apply labels: '${labels_to_add}'`);
-              } else {
-                throw error;
-              }
-            }
-          }
+    uses: ./.github/workflows/add-labels.yaml
+    with:
+      labels: "needs-triage"
+    secrets: inherit
 
   # ISSUE TYPE VALIDATIONS
   validate-feature-type:
