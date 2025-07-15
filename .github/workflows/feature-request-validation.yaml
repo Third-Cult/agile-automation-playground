@@ -126,13 +126,14 @@ jobs:
               const message = [
                 "**Feature Request Validation Failed**",
                 "",
-                "Howdy @${issueAuthor},",
+                `Howdy @${issueAuthor},`,
                 "",
                 "The following issues were found in this ticket:",
-                ${problems.join('\n')}
+                problems.join('\n'),
                 "",
                 "Please edit the issue to include or expand the required sections."
-              ].join('\n');
+                ].join('\n');
+
 
               await github.rest.issues.createComment({ owner, repo, issue_number, body: message });
               console.log("ℹ️ INFO: Comment posted");
