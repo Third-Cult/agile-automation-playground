@@ -108,3 +108,11 @@ body:
     placeholder: This feature depends on ...
   validations:
     required: false
+- type: input
+  id: tag
+  attributes:
+    label: Issue Market
+    value: 📜 Feature/Enhancement Request 📜
+    description: DO NOT EDIT – used by automation.
+  validations:
+    required: false
