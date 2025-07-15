@@ -123,16 +123,16 @@ jobs:
               const labels = JSON.parse(`${{ steps.init.outputs.labels }}`);
              const issueAuthor = context.payload.issue.user.login;
 
-              const message = `
-                **Feature Request Validation Failed**
-
-                Howdy @${issueAuthor},
-
-                The following issues were found in this ticket:
+              const message = [
+                "**Feature Request Validation Failed**",
+                "",
+                "Howdy @${issueAuthor},",
+                "",
+                "The following issues were found in this ticket:",
                 ${problems.join('\n')}
-
-                Please edit the issue to include or expand the required sections.
-              `.trim();
+                "",
+                "Please edit the issue to include or expand the required sections."
+              ].join('\n');
 
               await github.rest.issues.createComment({ owner, repo, issue_number, body: message });
               console.log("ℹ️ INFO: Comment posted");
