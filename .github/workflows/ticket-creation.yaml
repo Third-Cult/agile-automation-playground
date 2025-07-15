@@ -24,7 +24,7 @@ jobs:
   # ISSUE TYPE VALIDATIONS
   validate-feature-type:
     needs: add-default-labels
-    if: contains(github.event.issue.body, '📜 Feature/Enhancement Request 📜')
+    if: contains(github.event.issue.body, '<!-- issue-template:feature-request -->')
     uses: ./.github/workflows/feature-request-validation.yaml
     with:
       required-sections: >

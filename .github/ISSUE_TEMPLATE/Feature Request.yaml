@@ -6,7 +6,8 @@ body:
 - type: markdown
   attributes:
     value: |
-      #📜 Feature/Enhancement Request 📜
+      <!-- issue-template:feature-request -->
+      📜 Feature/Enhancement Request 📜
 
       Please fill out the sections below to help us understand and evaluate your request. Issues missing detail may be returned for clarification.
 - type: textarea
