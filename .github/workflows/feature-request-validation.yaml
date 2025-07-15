@@ -97,7 +97,7 @@ jobs:
                   console.log(`ℹ️ INFO: Required section found: ${section}`);
                   if (content.length < minLen) {
                     problems.push(`- **${section}** is too short (minimum ${minLen} characters)`);
-                    console.log(`🟥 FAIL: Section too short: ${section}');
+                    console.log(`🟥 FAIL: Section too short: ${section}`);
                   } else {
                     console.log(`✅ SUCCESS: Required section meets minimum length requirements: ${section}`);
                   }
@@ -120,7 +120,7 @@ jobs:
               const owner = `${{ steps.init.outputs.owner }}`;
               const repo = `${{ steps.init.outputs.repo }}`;
               const issue_number = Number(`${{ steps.init.outputs.issue_number }}`);
-              const labels = JSON.parse(`${{ steps.init.outputs.labels-on-fail }}`);
+              const labels = JSON.parse(`${{ steps.init.outputs.labels }}`);
 
               const message = `
                 **Feature Request Validation Failed**
