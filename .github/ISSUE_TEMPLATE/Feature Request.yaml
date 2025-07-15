@@ -6,14 +6,11 @@ body:
 - type: markdown
   attributes:
     value: |
-      <!-- issue-template:feature-request -->
-      📜 Feature/Enhancement Request 📜
-
-      Please fill out the sections below to help us understand and evaluate your request. Issues missing detail may be returned for clarification.
+          Please fill out the sections below to help us understand and evaluate your request. Issues missing detail may be returned for clarification.
 - type: textarea
   id: problem
   attributes:
-    label: Problem Statement / Background
+    label: /# Problem Statement / Background
     description: |
       Focus on the "why" - not the solution, yet.
       - What problem is being solved?
