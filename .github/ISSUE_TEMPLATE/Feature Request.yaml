@@ -10,7 +10,7 @@ body:
 - type: textarea
   id: problem
   attributes:
-    label: /# Problem Statement / Background
+    label: Problem Statement / Background
     description: |
       Focus on the "why" - not the solution, yet.
       - What problem is being solved?
