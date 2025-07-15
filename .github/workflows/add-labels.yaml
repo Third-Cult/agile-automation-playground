@@ -23,7 +23,7 @@ jobs:
           script: |
             try {
               const input = '${{ inputs.labels }}';
-              const labelsToAdd = input.split(',').map(l => l.trim()).filter(Boolean);
+              const labelsToAdd = JSON.parse(input);;
               const { owner, repo } = context.repo;
               const issueNumber = context.issue.number;
 
