@@ -2,17 +2,6 @@ name: Validate Feature Request Ticket
 
 on:
   workflow_call:
-    inputs:
-      required-sections:
-        description: "An object of required section titles and their minimum lengths: { Title: number }"
-        required: true
-        type: string
-        default: '{"Problem Statement / Background": 25, "Goals / Outcomes": 25}'
-      labels-on-fail:
-        description: "Comma-separated list of labels to apply when problems arise"
-        required: false
-        type: string
-        default: '["needs-more-info"]'
 
 jobs:
   run-validation:
