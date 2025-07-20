@@ -28,8 +28,11 @@ jobs:
             const owner = context.repo.owner;
             const repo = context.repo.repo;
             const author = '${{ inputs.issue-author }}';
-            const problems = ${{ inputs.problems && fromJSON(inputs.problems) || '[]' }};
+            const raw = '${{ inputs.problems }}';
+            const problems = raw ? JSON.parse(raw) : [];
 
+            const { data: repoLabels } = await github.rest.issues.listLabelsForRepo({ owner, repo });
+            const labelExists = (label) => repoLabels.some(l => l.name === label);
             const hasLabel = (label) => issue.labels.some(l => l.name === label);
             const assignees = issue.assignees.map(u => u.login);
 
@@ -56,11 +59,11 @@ jobs:
 
             await github.rest.issues.createComment({ owner, repo, issue_number, body: successMessage });
 
-            if (hasLabel("needs-more-info")) {
+            if (labelExists("needs-more-info") && hasLabel("needs-more-info")) {
               await github.rest.issues.removeLabel({ owner, repo, issue_number, name: "needs-more-info" });
             }
 
-            if (!hasLabel("needs-triage")) {
+            if (labelExists("needs-triage") && !hasLabel("needs-triage")) {
               await github.rest.issues.addLabels({ owner, repo, issue_number, labels: ["needs-triage"] });
             }
 
