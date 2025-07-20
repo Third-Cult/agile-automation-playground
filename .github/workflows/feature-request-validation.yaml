@@ -139,6 +139,11 @@ jobs:
               console.log(`🚨 ERROR: Failed to comment or label issue: ${error.message}`);
               core.setFailed(error.message);
             }
-      - name: Set output - problems
+      - name: Set output: problems
         if: always()
-        run: echo "problems=${{ steps.validate.outputs.problems }}" >> $GITHUB_OUTPUT
+        run: |
+          {
+            echo 'problems<<EOF'
+            echo "${{ steps.validate.outputs.problems }}"
+            echo 'EOF'
+          } >> "$GITHUB_OUTPUT"
