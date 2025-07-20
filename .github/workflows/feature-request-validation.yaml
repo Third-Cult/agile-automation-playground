@@ -9,39 +9,30 @@ jobs:
     permissions:
       issues: write
     steps:
-      - name: Initialize metadata and validate JSON inputs
+      - name: Initialize metadata from config
         id: init
         uses: actions/github-script@v7
         with:
           script: |
-            try {
-              const issue = context.payload.issue;
-              if (!issue) throw new Error("🚨 ERROR: No issue payload found.");
+            const fs = require('fs');
+            const path = '.github/validation/feature-request.json';
 
-              const body = issue.body || '';
-              const issue_number = issue.number;
-              const owner = context.repo.owner;
-              const repo = context.repo.repo;
-
-              let sections, labelsToAdd;
-
-              sections = {
-                "Problem Statement / Background": 10,
-                "Goals / Outcomes": 20,
-                "Proposed Solution": 30
-              };
-
-              labelsToAdd = ["needs-more-info"];
-
-              core.setOutput("body", body);
-              core.setOutput("issue_number", issue_number);
-              core.setOutput("owner", owner);
-              core.setOutput("repo", repo);
-              core.setOutput("sections", JSON.stringify(sections));
-              core.setOutput("labels", JSON.stringify(labelsToAdd));
-            } catch (err) {
-              core.setFailed(err.message);
+            if (!fs.existsSync(path)) {
+              throw new Error(`🚨 ERROR: Missing config file at ${path}`);
             }
+
+            const config = JSON.parse(fs.readFileSync(path, 'utf8'));
+            const issue = context.payload.issue;
+            if (!issue) throw new Error("🚨 ERROR: No issue payload found.");
+
+            core.setOutput("body", issue.body || '');
+            core.setOutput("issue_number", issue.number);
+            core.setOutput("owner", context.repo.owner);
+            core.setOutput("repo", context.repo.repo);
+            core.setOutput("marker", config.marker);
+            core.setOutput("sections", JSON.stringify(config.sections));
+            core.setOutput("labels_fail", JSON.stringify(config.labels.fail));
+            core.setOutput("labels_pass", JSON.stringify(config.labels.pass));
 
       - name: Check if this is a feature/enhancement request
         id: check-type
@@ -49,10 +40,10 @@ jobs:
         with:
           script: |
             const body = `${{ steps.init.outputs.body }}`;
-            const featureKeyword = '📜 Feature/Enhancement Request 📜';
+            const marker = `${{ steps.init.outputs.marker }}`;
+            core.setOutput("is-feature", body.includes(marker));
 
-            core.setOutput("is-feature", false);
-            if (!body.includes(featureKeyword)) {
+            if (!body.includes(marker)) {
               console.log("ℹ️ INFO: Not a feature/enhancement request. Skipping.");
               return;
             }
@@ -105,7 +96,7 @@ jobs:
               const owner = `${{ steps.init.outputs.owner }}`;
               const repo = `${{ steps.init.outputs.repo }}`;
               const issue_number = Number(`${{ steps.init.outputs.issue_number }}`);
-              const labels = JSON.parse(`${{ steps.init.outputs.labels }}`);
+              const labels = const labels = JSON.parse(`${{ steps.init.outputs.labels }}`);
              const issueAuthor = context.payload.issue.user.login;
 
               const message = [
@@ -116,7 +107,7 @@ jobs:
                 "The following issues were found in this ticket:",
                 problems.join('\n'),
                 "",
-                "Please edit the issue to include or expand the required sections. Until the ticket has passed acceptance checks - it cannot be traiged."
+                "Please edit the issue to include or expand the required sections. Until the ticket has passed acceptance checks - it cannot be triaged."
                 ].join('\n');
 
 
@@ -142,8 +133,9 @@ jobs:
       - name: Set output: problems
         if: always()
         run: |
+          problems='${{ steps.validate.outputs.problems }}'
           {
-            echo 'problems<<EOF'
-            echo "${{ steps.validate.outputs.problems }}"
-            echo 'EOF'
+            echo "problems<<EOF"
+            echo "$problems"
+            echo "EOF"
           } >> "$GITHUB_OUTPUT"
