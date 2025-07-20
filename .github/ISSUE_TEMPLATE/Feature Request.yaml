@@ -42,7 +42,7 @@ body:
 - type: textarea
   id: criteria
   attributes:
-    label: Acceptence Criteria
+    label: Acceptance Criteria
     description: |
       - Define "done" in clear and testable terms
       - Consider all relevant angles (e.g., product impact, user experience, implementation, testing, etc.)

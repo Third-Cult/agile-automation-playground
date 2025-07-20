@@ -1,0 +1,55 @@
+name: Validate Edited Tickets
+
+on:
+  issues:
+    types: [edited]
+
+jobs:
+  validate-edited-feature:
+    if: contains(github.event.issue.labels.*.name, 'needs-more-info') &&
+        contains(github.event.issue.body, '📜 Feature/Enhancement Request 📜')
+    uses: ./.github/workflows/feature-request-validation.yaml
+    secrets: inherit
+
+  post-validation:
+    needs: validate-edited-feature
+    if: ${{ success() }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Post success comment, update labels
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const issue = context.payload.issue;
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const issue_number = issue.number;
+            const author = issue.user.login;
+
+            await github.rest.issues.createComment({
+              owner,
+              repo,
+              issue_number,
+              body: `✅ Thanks @${author}, your update passed validation! The issue is now ready for triage.`
+            });
+
+            await github.rest.issues.removeLabel({
+              owner,
+              repo,
+              issue_number,
+              name: "needs-more-info"
+            });
+
+            await github.rest.issues.addLabels({
+              owner,
+              repo,
+              issue_number,
+              labels: ["needs-triage"]
+            });
+
+            await github.rest.issues.removeAssignees({
+              owner,
+              repo,
+              issue_number,
+              assignees: [author]
+            });
