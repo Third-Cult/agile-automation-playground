@@ -116,7 +116,7 @@ jobs:
                 "The following issues were found in this ticket:",
                 problems.join('\n'),
                 "",
-                "Please edit the issue to include or expand the required sections."
+                "Please edit the issue to include or expand the required sections. Until the ticket has passed acceptance checks - it cannot be traiged."
                 ].join('\n');
 
 
@@ -126,12 +126,19 @@ jobs:
               await github.rest.issues.addLabels({ owner, repo, issue_number, labels });
               console.log("ℹ️ INFO: Labels applied:", labels.join(", "));
 
+              await github.rest.issues.removeLabel({
+                owner,
+                repo,
+                issue_number,
+                name: "needs-triage"
+              });
+
               await github.rest.issues.addAssignees({ owner, repo, issue_number, assignees: [issueAuthor] });
               console.log(`ℹ️ INFO: Issue assigned to @${issueAuthor}`);              
             } catch (error) {
               console.log(`🚨 ERROR: Failed to comment or label issue: ${error.message}`);
               core.setFailed(error.message);
             }
-      - name: Set output: problems
+      - name: Set output - problems
         if: always()
         run: echo "problems=${{ steps.validate.outputs.problems }}" >> $GITHUB_OUTPUT
