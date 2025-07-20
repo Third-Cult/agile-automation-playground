@@ -9,21 +9,26 @@ jobs:
     permissions:
       issues: write
     steps:
-      - name: Initialize metadata from config
+      - name: Initialize inline config
         id: init
         uses: actions/github-script@v7
         with:
           script: |
-            const fs = require('fs');
-            const path = '.github/validation/feature-request.json';
-
-            if (!fs.existsSync(path)) {
-              throw new Error(`🚨 ERROR: Missing config file at ${path}`);
-            }
-
-            const config = JSON.parse(fs.readFileSync(path, 'utf8'));
             const issue = context.payload.issue;
             if (!issue) throw new Error("🚨 ERROR: No issue payload found.");
+
+            const config = {
+              marker: "📜 Feature/Enhancement Request 📜",
+              labels: {
+                fail: ["needs-more-info"],
+                pass: ["needs-triage"]
+              },
+              sections: {
+                "Problem Statement / Background": 10,
+                "Goals / Outcomes": 20,
+                "Proposed Solution": 30
+              }
+            };
 
             core.setOutput("body", issue.body || '');
             core.setOutput("issue_number", issue.number);
@@ -72,17 +77,16 @@ jobs:
 
                 if (!match) {
                   problems.push(`- Missing required section: **${section}**`);
-                  console.log(`⚠️ INFO: Missing required section: **${section}**`);
+                  console.log(`⚠️ Missing section: ${section}`);
                 } else {
                   const content = match[0].replace(/^###\s*[^\n]+\n/, '').trim();
                   if (content.length < minLen) {
                     problems.push(`- **${section}** is too short (minimum ${minLen} characters)`);
-                    console.log(`🟥 FAIL: **${section}** is too short (minimum ${minLen} characters)`);
+                    console.log(`🟥 Section too short: ${section}`);
                   }
                 }
               } catch (err) {
                 problems.push(`- Error while checking section: **${section}**`);
-                console.log(`🚨 ERROR: While checking section: **${section}**`);
               }
             }
 
@@ -142,7 +146,6 @@ jobs:
               assignees: [issueAuthor]
             });
 
-            // Write to Actions summary
             await core.summary
               .addHeading('❌ Feature Request Validation Failed')
               .addList(problems)
@@ -197,9 +200,9 @@ jobs:
             });
 
             await core.summary
-            .addHeading('✅ Feature Request Validation Passed')
-            .addRaw(`@${issueAuthor}'s ticket meets all section requirements.`)
-            .write();
+              .addHeading('✅ Feature Request Validation Passed')
+              .addRaw(`@${issueAuthor}'s ticket meets all section requirements.`)
+              .write();
 
       - name: Echo problems to output
         if: always()
