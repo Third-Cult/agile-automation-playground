@@ -26,14 +26,6 @@ jobs:
     needs: add-default-labels
     if: contains(github.event.issue.body, '📜 Feature/Enhancement Request 📜')
     uses: ./.github/workflows/feature-request-validation.yaml
-    with:
-      required-sections: >
-        {
-          "Problem Statement / Background": 10,
-          "Goals / Outcomes": 20,
-          "Proposed Solution": 30
-        }
-      labels-on-fail: '["needs-more-info"]'
     secrets: inherit
 
     
