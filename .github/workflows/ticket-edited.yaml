@@ -25,7 +25,8 @@ jobs:
             const repo = context.repo.repo;
             const author = issue.user.login;
 
-            const problems = JSON.parse('${{ needs.validate-feature-request-edit.outputs.problems || "[]" }}');
+            const raw = '${{ needs.validate-feature-request-edit.outputs.problems }}';
+            const problems = raw ? JSON.parse(raw) : [];
 
             if (problems.length > 0) {
               const message = [
