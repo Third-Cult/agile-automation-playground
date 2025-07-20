@@ -1,0 +1,71 @@
+name: Handle Post-Validation Results
+
+on:
+  workflow_call:
+    inputs:
+      problems:
+        required: false
+        type: string
+      issue-author:
+        required: true
+        type: string
+    secrets:
+      token:
+        required: true
+        description: GitHub token with `issues` scope
+
+jobs:
+  post-validation-response:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Post comment and update labels
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.token }}
+          script: |
+            const issue = context.payload.issue;
+            const issue_number = issue.number;
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const author = '${{ inputs.issue-author }}';
+            const problems = ${{ inputs.problems && fromJSON(inputs.problems) || '[]' }};
+
+            const hasLabel = (label) => issue.labels.some(l => l.name === label);
+            const assignees = issue.assignees.map(u => u.login);
+
+            if (problems.length > 0) {
+              const message = [
+                "**Ticket Still Needs Work**",
+                "",
+                `Hey @${author}, thanks for updating your ticket! However, the following issues remain:`,
+                problems.join('\n'),
+                "",
+                "Please revise the issue again and this will recheck automatically on save.",
+              ].join('\n');
+
+              await github.rest.issues.createComment({ owner, repo, issue_number, body: message });
+              console.log("🟥 FAIL: Validation failed. Problems were found. Label remains.");
+              return;
+            }
+
+            const successMessage = [
+              `**Thanks @${author}, your ticket now meets the minimum requirements!**`,
+              "",
+              "We’ve removed the *needs-more-info* label. Your issue is ready for triage.",
+            ].join('\n');
+
+            await github.rest.issues.createComment({ owner, repo, issue_number, body: successMessage });
+
+            if (hasLabel("needs-more-info")) {
+              await github.rest.issues.removeLabel({ owner, repo, issue_number, name: "needs-more-info" });
+            }
+
+            if (!hasLabel("needs-triage")) {
+              await github.rest.issues.addLabels({ owner, repo, issue_number, labels: ["needs-triage"] });
+            }
+
+            if (assignees.includes(author)) {
+              await github.rest.issues.removeAssignees({ owner, repo, issue_number, assignees: [author] });
+            }
+
+            console.log("✅ SUCCESS: Labels updated and user unassigned.");
