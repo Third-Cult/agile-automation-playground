@@ -13,7 +13,7 @@ jobs:
 
   post-validation-feature-request:
     needs: validate-feature-request-edit
-    uses: ./.github/workflows/post-validation-handler.yaml
+    uses: ./.github/workflows/post-validation.yaml
     with:
       problems: ${{ needs.validate-feature-request-edit.outputs.problems }}
       issue-author: ${{ github.event.issue.user.login }}
