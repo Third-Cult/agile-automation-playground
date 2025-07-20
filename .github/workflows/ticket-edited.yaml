@@ -12,7 +12,7 @@ jobs:
     secrets: inherit
 
   post-validation:
-    needs: validate-edited-feature
+    needs: validate-feature-request-edit
     runs-on: ubuntu-latest
     steps:
       - name: Post comment based on validation results
