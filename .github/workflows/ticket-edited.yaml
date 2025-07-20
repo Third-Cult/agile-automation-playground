@@ -1,3 +1,16 @@
+name: Validate Edited Tickets
+
+on:
+  issues:
+    types: [edited]
+
+jobs:
+  validate-feature-request-edit:
+    if: contains(github.event.issue.labels.*.name, 'needs-more-info') &&
+        contains(github.event.issue.body, '📜 Feature/Enhancement Request 📜')
+    uses: ./.github/workflows/feature-request-validation.yaml
+    secrets: inherit
+
   post-validation:
     needs: validate-feature-request-edit
     runs-on: ubuntu-latest
