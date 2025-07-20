@@ -11,64 +11,11 @@ jobs:
     uses: ./.github/workflows/feature-request-validation.yaml
     secrets: inherit
 
-  post-validation:
+  post-validation-feature-request:
     needs: validate-feature-request-edit
-    runs-on: ubuntu-latest
-    steps:
-      - name: Post comment based on validation results
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const issue = context.payload.issue;
-            const issue_number = issue.number;
-            const owner = context.repo.owner;
-            const repo = context.repo.repo;
-            const author = issue.user.login;
-            const raw = '${{ needs.validate-feature-request-edit.outputs.problems }}';
-            const problems = raw ? JSON.parse(raw) : [];
-
-            const hasLabel = (label) => issue.labels.some(l => l.name === label);
-
-            if (problems.length > 0) {
-              const message = [
-                "**Feature Request Still Needs Work**",
-                "",
-                `Hey @${author}, thanks for updating your ticket! However, the following issues remain:`,
-                problems.join('\n'),
-                "",
-                "Please revise the issue again and this will recheck automatically on save.",
-              ].join('\n');
-
-              await github.rest.issues.createComment({ owner, repo, issue_number, body: message });
-              console.log("🟥 FAIL: Validation failed. Problems were found. Label remains.");
-              return;
-            }
-
-            // ✅ Success flow
-            const successMessage = [
-              `**Thanks @${author}, your ticket now meets the minimum requirements!**`,
-              "",
-              "We’ve removed the *needs-more-info* label. Your issue is ready for triage.",
-            ].join('\n');
-
-            await github.rest.issues.createComment({ owner, repo, issue_number, body: successMessage });
-
-            if (hasLabel("needs-more-info")) {
-              await github.rest.issues.removeLabel({ owner, repo, issue_number, name: "needs-more-info" });
-            }
-
-            if (!hasLabel("needs-triage")) {
-              await github.rest.issues.addLabels({ owner, repo, issue_number, labels: ["needs-triage"] });
-            }
-
-            const assignees = issue.assignees.map(u => u.login);
-            if (assignees.includes(author)) {
-              await github.rest.issues.removeAssignees({
-                owner,
-                repo,
-                issue_number,
-                assignees: [author]
-              });
-            }
-
-            console.log("✅ SUCCESS: Validation passed. Labels updated and user unassigned.");
+    uses: ./.github/workflows/post-validation-handler.yaml
+    with:
+      problems: ${{ needs.validate-feature-request-edit.outputs.problems }}
+      issue-author: ${{ github.event.issue.user.login }}
+    secrets:
+      token: ${{ secrets.GITHUB_TOKEN }}
