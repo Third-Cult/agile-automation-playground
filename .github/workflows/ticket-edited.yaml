@@ -1,16 +1,3 @@
-name: Validate Edited Tickets
-
-on:
-  issues:
-    types: [edited]
-
-jobs:
-  validate-feature-request-edit:
-    if: contains(github.event.issue.labels.*.name, 'needs-more-info') &&
-        contains(github.event.issue.body, '📜 Feature/Enhancement Request 📜')
-    uses: ./.github/workflows/feature-request-validation.yaml
-    secrets: inherit
-
   post-validation:
     needs: validate-feature-request-edit
     runs-on: ubuntu-latest
@@ -24,64 +11,51 @@ jobs:
             const owner = context.repo.owner;
             const repo = context.repo.repo;
             const author = issue.user.login;
-
             const raw = '${{ needs.validate-feature-request-edit.outputs.problems }}';
             const problems = raw ? JSON.parse(raw) : [];
 
+            const hasLabel = (label) => issue.labels.some(l => l.name === label);
+
             if (problems.length > 0) {
               const message = [
-                `**Feature Request Still Needs Work**`,
-                ``,
+                "**Feature Request Still Needs Work**",
+                "",
                 `Hey @${author}, thanks for updating your ticket! However, the following issues remain:`,
                 problems.join('\n'),
-                ``,
-                `Please revise the issue again and this will recheck automatically on save.`,
+                "",
+                "Please revise the issue again and this will recheck automatically on save.",
               ].join('\n');
 
-              await github.rest.issues.createComment({
-                owner,
-                repo,
-                issue_number,
-                body: message
-              });
-
+              await github.rest.issues.createComment({ owner, repo, issue_number, body: message });
               console.log("🟥 FAIL: Validation failed. Problems were found. Label remains.");
               return;
             }
 
-            // Success flow
+            // ✅ Success flow
             const successMessage = [
               `**Thanks @${author}, your ticket now meets the minimum requirements!**`,
-              ``,
-              `We’ve removed the *needs-more-info* label. Your issue is ready for triage.`,
+              "",
+              "We’ve removed the *needs-more-info* label. Your issue is ready for triage.",
             ].join('\n');
 
-            await github.rest.issues.createComment({
-              owner,
-              repo,
-              issue_number,
-              body: successMessage
-            });
+            await github.rest.issues.createComment({ owner, repo, issue_number, body: successMessage });
 
-            await github.rest.issues.removeLabel({
-              owner,
-              repo,
-              issue_number,
-              name: "needs-more-info"
-            });
+            if (hasLabel("needs-more-info")) {
+              await github.rest.issues.removeLabel({ owner, repo, issue_number, name: "needs-more-info" });
+            }
 
-            await github.rest.issues.addLabels({
-              owner,
-              repo,
-              issue_number,
-              labels: ["needs-triage"]
-            });
+            if (!hasLabel("needs-triage")) {
+              await github.rest.issues.addLabels({ owner, repo, issue_number, labels: ["needs-triage"] });
+            }
 
-            await github.rest.issues.removeAssignees({
-              owner,
-              repo,
-              issue_number,
-              assignees: [author]
-            });
+            const assignees = issue.assignees.map(u => u.login);
+            if (assignees.includes(author)) {
+              await github.rest.issues.removeAssignees({
+                owner,
+                repo,
+                issue_number,
+                assignees: [author]
+              });
+            }
 
             console.log("✅ SUCCESS: Validation passed. Labels updated and user unassigned.");
