@@ -36,28 +36,33 @@ jobs:
 
       - name: Check if this is a feature/enhancement request
         id: check-type
+        env:
+          BODY: ${{ steps.init.outputs.body }}
+          MARKER: ${{ steps.init.outputs.marker }}
         uses: actions/github-script@v7
         with:
           script: |
-            const body = `${{ steps.init.outputs.body }}`;
-            const marker = `${{ steps.init.outputs.marker }}`;
-            core.setOutput("is-feature", body.includes(marker));
+            const body = process.env.BODY;
+            const marker = process.env.MARKER;
 
-            if (!body.includes(marker)) {
+            const isFeature = body.includes(marker);
+            core.setOutput("is-feature", isFeature);
+
+            if (!isFeature) {
               console.log("ℹ️ INFO: Not a feature/enhancement request. Skipping.");
-              return;
             }
-
-            core.setOutput("is-feature", true);
 
       - name: Validate required sections
         id: validate
         if: steps.check-type.outputs.is-feature == 'true'
+        env:
+          BODY: ${{ steps.init.outputs.body }}
+          SECTIONS: ${{ steps.init.outputs.sections }}
         uses: actions/github-script@v7
         with:
           script: |
-            const body = `${{ steps.init.outputs.body }}`;
-            const sections = JSON.parse(`${{ steps.init.outputs.sections }}`);
+            const body = process.env.BODY;
+            const sections = JSON.parse(process.env.SECTIONS);
             const problems = [];
 
             for (const [section, minLen] of Object.entries(sections)) {
@@ -67,20 +72,17 @@ jobs:
 
                 if (!match) {
                   problems.push(`- Missing required section: **${section}**`);
-                  console.log(`🟥 FAIL: Missing section: ${section}`);
+                  console.log(`⚠️ INFO: Missing required section: **${section}**`);
                 } else {
                   const content = match[0].replace(/^###\s*[^\n]+\n/, '').trim();
-                  console.log(`ℹ️ INFO: Required section found: ${section}`);
                   if (content.length < minLen) {
                     problems.push(`- **${section}** is too short (minimum ${minLen} characters)`);
-                    console.log(`🟥 FAIL: Section too short: ${section}`);
-                  } else {
-                    console.log(`✅ SUCCESS: Required section meets minimum length requirements: ${section}`);
+                    console.log(`🟥 FAIL: **${section}** is too short (minimum ${minLen} characters)`);
                   }
                 }
               } catch (err) {
-                console.log(`🚨 ERROR: Error parsing section "${section}": ${err.message}`);
                 problems.push(`- Error while checking section: **${section}**`);
+                console.log(`🚨 ERROR: While checking section: **${section}**`);
               }
             }
 
@@ -88,54 +90,117 @@ jobs:
 
       - name: Comment and label if validation failed
         if: steps.validate.outputs.problems != '[]'
+        env:
+          OWNER: ${{ steps.init.outputs.owner }}
+          REPO: ${{ steps.init.outputs.repo }}
+          ISSUE_NUMBER: ${{ steps.init.outputs.issue_number }}
+          LABELS_FAIL: ${{ steps.init.outputs.labels_fail }}
+          PROBLEMS: ${{ steps.validate.outputs.problems }}
         uses: actions/github-script@v7
         with:
           script: |
-            try {
-              const problems = JSON.parse(`${{ steps.validate.outputs.problems }}`);
-              const owner = `${{ steps.init.outputs.owner }}`;
-              const repo = `${{ steps.init.outputs.repo }}`;
-              const issue_number = Number(`${{ steps.init.outputs.issue_number }}`);
-              const labels = const labels = JSON.parse(`${{ steps.init.outputs.labels }}`);
-             const issueAuthor = context.payload.issue.user.login;
+            const problems = JSON.parse(process.env.PROBLEMS);
+            const labels = JSON.parse(process.env.LABELS_FAIL);
+            const issueAuthor = context.payload.issue.user.login;
 
-              const message = [
-                "**Feature Request Validation Failed**",
-                "",
-                `Howdy @${issueAuthor},`,
-                "",
-                "The following issues were found in this ticket:",
-                problems.join('\n'),
-                "",
-                "Please edit the issue to include or expand the required sections. Until the ticket has passed acceptance checks - it cannot be triaged."
-                ].join('\n');
+            const message = [
+              "**Feature Request Validation Failed**",
+              "",
+              `Howdy @${issueAuthor},`,
+              "",
+              "The following issues were found in this ticket:",
+              problems.join('\n'),
+              "",
+              "Please edit the issue to include or expand the required sections. Until the ticket has passed acceptance checks - it cannot be triaged."
+            ].join('\n');
 
+            await github.rest.issues.createComment({
+              owner: process.env.OWNER,
+              repo: process.env.REPO,
+              issue_number: Number(process.env.ISSUE_NUMBER),
+              body: message
+            });
 
-              await github.rest.issues.createComment({ owner, repo, issue_number, body: message });
-              console.log("ℹ️ INFO: Comment posted");
+            await github.rest.issues.addLabels({
+              owner: process.env.OWNER,
+              repo: process.env.REPO,
+              issue_number: Number(process.env.ISSUE_NUMBER),
+              labels
+            });
 
-              await github.rest.issues.addLabels({ owner, repo, issue_number, labels });
-              console.log("ℹ️ INFO: Labels applied:", labels.join(", "));
+            await github.rest.issues.removeLabel({
+              owner: process.env.OWNER,
+              repo: process.env.REPO,
+              issue_number: Number(process.env.ISSUE_NUMBER),
+              name: "needs-triage"
+            });
 
-              await github.rest.issues.removeLabel({
-                owner,
-                repo,
-                issue_number,
-                name: "needs-triage"
-              });
+            await github.rest.issues.addAssignees({
+              owner: process.env.OWNER,
+              repo: process.env.REPO,
+              issue_number: Number(process.env.ISSUE_NUMBER),
+              assignees: [issueAuthor]
+            });
 
-              await github.rest.issues.addAssignees({ owner, repo, issue_number, assignees: [issueAuthor] });
-              console.log(`ℹ️ INFO: Issue assigned to @${issueAuthor}`);              
-            } catch (error) {
-              console.log(`🚨 ERROR: Failed to comment or label issue: ${error.message}`);
-              core.setFailed(error.message);
-            }
-      - name: Set output: problems
+            // Write to Actions summary
+            await core.summary
+              .addHeading('❌ Feature Request Validation Failed')
+              .addList(problems)
+              .addQuote('Please update the ticket and rerun the validation.')
+              .write();
+
+      - name: Comment and label if validation passed
+        if: steps.validate.outputs.problems == '[]'
+        env:
+          OWNER: ${{ steps.init.outputs.owner }}
+          REPO: ${{ steps.init.outputs.repo }}
+          ISSUE_NUMBER: ${{ steps.init.outputs.issue_number }}
+          LABELS_PASS: ${{ steps.init.outputs.labels_pass }}
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const labels = JSON.parse(process.env.LABELS_PASS);
+            const issueAuthor = context.payload.issue.user.login;
+
+            const message = [
+              "**Feature Request Validation Passed**",
+              "",
+              `Thanks @${issueAuthor}, your issue now meets the minimum requirements and is ready for triage.`
+            ].join('\n');
+
+            await github.rest.issues.createComment({
+              owner: process.env.OWNER,
+              repo: process.env.REPO,
+              issue_number: Number(process.env.ISSUE_NUMBER),
+              body: message
+            });
+
+            await github.rest.issues.addLabels({
+              owner: process.env.OWNER,
+              repo: process.env.REPO,
+              issue_number: Number(process.env.ISSUE_NUMBER),
+              labels
+            });
+
+            await github.rest.issues.removeLabel({
+              owner: process.env.OWNER,
+              repo: process.env.REPO,
+              issue_number: Number(process.env.ISSUE_NUMBER),
+              name: "needs-more-info"
+            });
+
+            await github.rest.issues.removeAssignees({
+              owner: process.env.OWNER,
+              repo: process.env.REPO,
+              issue_number: Number(process.env.ISSUE_NUMBER),
+              assignees: [issueAuthor]
+            });
+
+            await core.summary
+            .addHeading('✅ Feature Request Validation Passed')
+            .addRaw(`@${issueAuthor}'s ticket meets all section requirements.`)
+            .write();
+
+      - name: Echo problems to output
         if: always()
-        run: |
-          problems='${{ steps.validate.outputs.problems }}'
-          {
-            echo "problems<<EOF"
-            echo "$problems"
-            echo "EOF"
-          } >> "$GITHUB_OUTPUT"
+        run: echo "problems=${{ steps.validate.outputs.problems }}" >> $GITHUB_OUTPUT
