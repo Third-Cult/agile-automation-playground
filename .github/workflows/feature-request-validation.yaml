@@ -152,7 +152,7 @@ jobs:
 
       - name: Apply failure labels
         if: steps.validate.outputs.problems != '[]'
-        uses: ./.github/workflows/modules/manage-labels.yaml
+        uses: ./.github/workflows/manage-labels.yaml
         with:
           add: ${{ steps.init.outputs.labels_fail }}
 
@@ -174,7 +174,7 @@ jobs:
 
       - name: Apply success labels
         if: steps.validate.outputs.problems == '[]'
-        uses: ./.github/workflows/modules/manage-labels.yaml
+        uses: ./.github/workflows/manage-labels.yaml
         with:
           add: ${{ steps.init.outputs.labels_pass }}
 
