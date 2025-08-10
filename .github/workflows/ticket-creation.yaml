@@ -6,7 +6,7 @@ on:
 jobs:
   # Adds all tickets into the default project for simple storage
   add-to-default-project:
-    uses: ./.github/workflows/modules/add-to-default-project.yaml
+    uses: ./.github/workflows/add-to-default-project.yaml
     with:
       project-id: "PVT_kwDODMXHZ84A9Dvi"
     secrets:
@@ -16,7 +16,7 @@ jobs:
   # Adds the initial labels that all tickets have assigned to them (i.e., needs-triage)
   add-default-labels:
     needs: add-to-default-project 
-    uses: ./.github/workflows/modules/manage-labels.yaml
+    uses: ./.github/workflows/manage-labels.yaml
     with:
       add: '["needs-triage"]'
     secrets: inherit
@@ -25,7 +25,7 @@ jobs:
   validate-feature-type:
     needs: add-default-labels
     if: contains(github.event.issue.body, '📜 Feature/Enhancement Request 📜')
-    uses: ./.github/workflows/validations/feature-request-validation.yaml
+    uses: ./.github/workflows/feature-request-validation.yaml
     secrets: inherit
 
     
