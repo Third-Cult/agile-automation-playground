@@ -8,12 +8,12 @@ jobs:
   validate-feature-request-edit:
     if: contains(github.event.issue.labels.*.name, 'needs-more-info') &&
         contains(github.event.issue.body, '📜 Feature/Enhancement Request 📜')
-    uses: ./.github/workflows/feature-request-validation.yaml
+    uses: ./.github/workflows/validations/feature-request-validation.yaml
     secrets: inherit
 
   post-validation-feature-request:
     needs: validate-feature-request-edit
-    uses: ./.github/workflows/post-validation.yaml
+    uses: ./.github/workflows/validations/post-validation.yaml
     with:
       problems: ${{ needs.validate-feature-request-edit.outputs.problems }}
       issue-author: ${{ github.event.issue.user.login }}

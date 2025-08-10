@@ -8,6 +8,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       issues: write
+
     steps:
       - name: Initialize inline config
         id: init
@@ -92,19 +93,17 @@ jobs:
 
             core.setOutput("problems", JSON.stringify(problems));
 
-      - name: Comment and label if validation failed
+      - name: Comment and handle failed validation
         if: steps.validate.outputs.problems != '[]'
         env:
           OWNER: ${{ steps.init.outputs.owner }}
           REPO: ${{ steps.init.outputs.repo }}
           ISSUE_NUMBER: ${{ steps.init.outputs.issue_number }}
-          LABELS_FAIL: ${{ steps.init.outputs.labels_fail }}
           PROBLEMS: ${{ steps.validate.outputs.problems }}
         uses: actions/github-script@v7
         with:
           script: |
             const problems = JSON.parse(process.env.PROBLEMS);
-            const labels = JSON.parse(process.env.LABELS_FAIL);
             const issueAuthor = context.payload.issue.user.login;
 
             const message = [
@@ -125,20 +124,19 @@ jobs:
               body: message
             });
 
-            await github.rest.issues.addLabels({
-              owner: process.env.OWNER,
-              repo: process.env.REPO,
-              issue_number: Number(process.env.ISSUE_NUMBER),
-              labels
-            });
+            // Remove 'needs-triage' if it exists
+            try {
+              await github.rest.issues.removeLabel({
+                owner: process.env.OWNER,
+                repo: process.env.REPO,
+                issue_number: Number(process.env.ISSUE_NUMBER),
+                name: "needs-triage"
+              });
+            } catch (e) {
+              console.log("ℹ️ INFO: 'needs-triage' label was not present.");
+            }
 
-            await github.rest.issues.removeLabel({
-              owner: process.env.OWNER,
-              repo: process.env.REPO,
-              issue_number: Number(process.env.ISSUE_NUMBER),
-              name: "needs-triage"
-            });
-
+            // Assign the author
             await github.rest.issues.addAssignees({
               owner: process.env.OWNER,
               repo: process.env.REPO,
@@ -152,13 +150,18 @@ jobs:
               .addQuote('Please update the ticket and rerun the validation.')
               .write();
 
-      - name: Comment and label if validation passed
+      - name: Apply failure labels
+        if: steps.validate.outputs.problems != '[]'
+        uses: ./.github/workflows/modules/manage-labels.yaml
+        with:
+          add: ${{ steps.init.outputs.labels_fail }}
+
+      - name: Comment and handle successful validation
         if: steps.validate.outputs.problems == '[]'
         env:
           OWNER: ${{ steps.init.outputs.owner }}
           REPO: ${{ steps.init.outputs.repo }}
           ISSUE_NUMBER: ${{ steps.init.outputs.issue_number }}
-          LABELS_PASS: ${{ steps.init.outputs.labels_pass }}
         uses: actions/github-script@v7
         with:
           script: |
@@ -168,6 +171,12 @@ jobs:
               .addHeading('✅ Feature Request Validation Passed')
               .addRaw(`@${issueAuthor}'s ticket meets all section requirements.`)
               .write();
+
+      - name: Apply success labels
+        if: steps.validate.outputs.problems == '[]'
+        uses: ./.github/workflows/modules/manage-labels.yaml
+        with:
+          add: ${{ steps.init.outputs.labels_pass }}
 
       - name: Echo problems to output
         if: always()
