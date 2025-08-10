@@ -19,7 +19,8 @@ jobs:
     uses: ./.github/workflows/manage-labels.yaml
     with:
       add: '["needs-triage"]'
-    secrets: inherit
+    secrets: 
+      token: ${{ secrets.PROJECT_PAT }}
 
   # ISSUE TYPE VALIDATIONS
   validate-feature-type:
