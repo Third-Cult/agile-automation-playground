@@ -22,12 +22,17 @@ jobs:
         with:
           github-token: ${{ secrets.token }}
           script: |
-            try {
-              const projectId = '${{ inputs.project-id }}';
-              const issueNodeId = context.payload?.issue?.node_id;
+            const projectId = '${{ inputs.project-id }}';
+            const issueNodeId = context.payload?.issue?.node_id;
 
+            let summaryMessage = "";
+
+            try {
               if (!projectId || !issueNodeId) {
-                core.setFailed(`🚨 ERROR: Missing required values: projectId=${projectId}, issueNodeId=${issueNodeId}`);
+                const missing = !projectId ? "projectId" : "issueNodeId";
+                const errorMsg = `🚨 ERROR: Missing required value: ${missing}`;
+                core.setFailed(errorMsg);
+                summaryMessage = errorMsg;
                 return;
               }
 
@@ -52,11 +57,24 @@ jobs:
               const addedId = result?.addProjectV2ItemById?.item?.id;
 
               if (addedId) {
-                core.info(`✅ SUCCESS: Issue added to project successfully. Item ID: ${addedId}`);
+                const successMsg = `✅ SUCCESS: Issue added to project successfully. Item ID: ${addedId}`;
+                core.info(successMsg);
+                summaryMessage = successMsg;
               } else {
-                core.warning("⚠️ WARNING: Mutation succeeded but no item ID was returned.");
+                const warnMsg = "⚠️ WARNING: Mutation succeeded but no item ID was returned.";
+                core.warning(warnMsg);
+                summaryMessage = warnMsg;
               }
 
             } catch (error) {
-              core.setFailed(`🚨 ERROR: Failed to add issue to project: ${error.message}`);
+              const errorMsg = `🚨 ERROR: Failed to add issue to project: ${error.message}`;
+              core.setFailed(errorMsg);
+              summaryMessage = error.message.includes('Resource not accessible by integration')
+                ? errorMsg + " 🔒 It looks like the token does not have access to the project."
+                : errorMsg;
+            } finally {
+              await core.summary
+                .addHeading('📦 Project Assignment Summary')
+                .addRaw(summaryMessage)
+                .write();
             }

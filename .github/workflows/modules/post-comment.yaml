@@ -1,0 +1,59 @@
+name: Post Comment
+
+on:
+  workflow_call:
+    inputs:
+      body:
+        description: "The message body to post"
+        required: true
+        type: string
+    secrets:
+      token:
+        description: "GitHub token with permission to comment"
+        required: true
+
+jobs:
+  post-comment:
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+      pull-requests: write
+
+    steps:
+      - name: Post comment to issue or PR
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.token }}
+          script: |
+            try {
+              const issueNumber = context.issue.number;
+              const { owner, repo } = context.repo;
+              const body = `${{ inputs.body }}`.trim();
+
+              if (!issueNumber) {
+                core.setFailed("🚨 ERROR: No issue or pull request number found.");
+                return;
+              }
+
+              if (!body) {
+                core.setFailed("🚨 ERROR: Comment body is empty.");
+                return;
+              }
+
+              await github.rest.issues.createComment({
+                owner,
+                repo,
+                issue_number: issueNumber,
+                body
+              });
+
+              core.info(`✅ SUCCESS: Comment posted to #${issueNumber}`);
+
+              await core.summary
+                .addHeading('💬 Comment Posted')
+                .addQuote(`To #${issueNumber}`)
+                .addRaw(body)
+                .write();
+            } catch (error) {
+              core.setFailed(`🚨 ERROR: Failed to post comment: ${error.message}`);
+            }
