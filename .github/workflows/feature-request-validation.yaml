@@ -95,21 +95,21 @@ jobs:
       # 4️⃣ Comment / failure
       - name: (4) Comment — failure
         if: ${{ steps.validate.outputs.problems != '[]' && env.QUIET != 'true' }}
-        uses: ./.github/workflows/post-comment.yaml
+        uses: ./.github/actions/post-comment
         with:
           body: ${{ steps.validate.outputs.fail_message }}
 
       # 5️⃣ Comment / success
       - name: (5) Comment — success
         if: ${{ steps.validate.outputs.problems == '[]' && env.QUIET != 'true' }}
-        uses: ./.github/workflows/post-comment.yaml
+        uses: ./.github/actions/post-comment
         with:
           body: ${{ steps.validate.outputs.pass_message }}
 
       # 6️⃣ Labels — failure
       - name: (6) Labels — add needs-more-info
         if: ${{ steps.validate.outputs.problems != '[]' }}
-        uses: ./.github/workflows/manage-labels.yaml
+        uses: ./.github/actions/manage-labels.
         with:
           add: ${{ steps.init.outputs.labels_fail }}
 
@@ -132,7 +132,7 @@ jobs:
       # 8️⃣ Labels — success
       - name: (8) Labels — add needs-triage
         if: ${{ steps.validate.outputs.problems == '[]' }}
-        uses: ./.github/workflows/manage-labels.yaml
+        uses: ./.github/actions/manage-labels
         with:
           add: ${{ steps.init.outputs.labels_pass }}
 
@@ -155,7 +155,7 @@ jobs:
       # 🔟 Assignments
       - name: (10) Assign author (failure)
         if: ${{ steps.validate.outputs.problems != '[]' }}
-        uses: ./.github/workflows/manage-assignees.yaml
+        uses: ./.github/actions/manage-assignees
         with:
           action: add
           assignees: ${{ format('["{0}"]', steps.validate.outputs.author) }}
