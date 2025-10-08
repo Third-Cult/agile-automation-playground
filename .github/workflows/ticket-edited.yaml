@@ -1,21 +1,117 @@
-name: Validate Edited Tickets
+name: Ticket Edited — Feature Revalidation
 
-on:
+"on":
   issues:
     types: [edited]
 
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.issue.number }}
+  cancel-in-progress: true
+
 jobs:
+  # 1️⃣ Gate: decide whether this edit should trigger feature revalidation
+  gate:
+    runs-on: ubuntu-latest
+    outputs:
+      run: ${{ steps.check.outputs.run }}
+      author: ${{ steps.check.outputs.author }}
+      reason: ${{ steps.check.outputs.reason }}
+    steps:
+      - name: (1) Inspect edit event & decide
+        id: check
+        uses: actions/github-script@v7
+        with:
+          script: |
+            console.log("🧭 Step 1 — Evaluating whether to run revalidation for this edit");
+
+            const { context, core } = require('@actions/github');
+
+            const issue = context.payload.issue;
+            const labels = (issue.labels || []).map(l => l.name);
+            const body   = issue.body || "";
+            const author = issue.user?.login || "unknown";
+
+            const isFeatureByLabel  = labels.includes("type: feature");
+            const isFeatureByMarker = body.includes("📜 Feature/Enhancement Request 📜");
+            const isFeature = isFeatureByLabel || isFeatureByMarker;
+
+            const needsMoreInfo = labels.includes("needs-more-info");
+
+            const shouldRun = needsMoreInfo && isFeature;
+
+            const reason = shouldRun
+              ? `will run — needs-more-info=${needsMoreInfo}, isFeature=${isFeature} (label=${isFeatureByLabel}, marker=${isFeatureByMarker})`
+              : `skip — needs-more-info=${needsMoreInfo}, isFeature=${isFeature} (label=${isFeatureByLabel}, marker=${isFeatureByMarker})`;
+
+            console.log(`➡️ Decision: ${reason}`);
+            core.setOutput("run", shouldRun ? "true" : "false");
+            core.setOutput("author", author);
+            core.setOutput("reason", reason);
+
+      - name: (2) Summary — gate decision
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { core } = require('@actions/github');
+            await core.summary
+              .addHeading('✳️ Ticket Edited — Gate Decision')
+              .addRaw(`Decision: <code>${{ steps.check.outputs.run }}</code>`)
+              .addBreak()
+              .addRaw(`${{ steps.check.outputs.reason }}`)
+              .write()
+
+  # 2️⃣ Validate (quiet) when gate passes
   validate-feature-request-edit:
-    if: contains(github.event.issue.labels.*.name, 'needs-more-info') &&
-        contains(github.event.issue.body, '📜 Feature/Enhancement Request 📜')
+    needs: gate
+    if: ${{ needs.gate.outputs.run == 'true' }}
     uses: ./.github/workflows/feature-request-validation.yaml
+    with:
+      quiet: true
     secrets: inherit
 
-  post-validation-feature-request:
-    needs: validate-feature-request-edit
+  # 3️⃣ Post results (comment, labels, assignees) when gate passes
+  post-validate-feature-request:
+    needs:
+      - gate
+      - validate-feature-request-edit
+    if: ${{ needs.gate.outputs.run == 'true' }}
     uses: ./.github/workflows/post-validation.yaml
     with:
       problems: ${{ needs.validate-feature-request-edit.outputs.problems }}
-      issue-author: ${{ github.event.issue.user.login }}
+      issue-author: ${{ needs.gate.outputs.author }}
     secrets:
       token: ${{ secrets.GITHUB_TOKEN }}
+
+  # 4️⃣ Final summary so it’s obvious what happened in this run
+  summarize:
+    needs:
+      - gate
+      - validate-feature-request-edit
+      - post-validate-feature-request
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: (4) Write run summary
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { core } = require('@actions/github');
+
+            const gate = `${{ needs.gate.result }}`;
+            const validate = `${{ needs.validate-feature-request-edit.result }}`;
+            const post = `${{ needs.post-validate-feature-request.result }}`;
+
+            await core.summary
+              .addHeading('📊 Ticket Edited — Run Summary')
+              .addTable([
+                [{data:'Job', header:true}, {data:'Result', header:true}],
+                ['gate', gate],
+                ['validate-feature-request-edit (quiet)', validate],
+                ['post-validate-feature-request', post],
+              ])
+              .write();

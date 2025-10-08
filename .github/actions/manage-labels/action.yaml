@@ -1,0 +1,49 @@
+name: "Manage Labels"
+description: "Add/remove labels on an issue or PR"
+inputs:
+  add:
+    description: 'JSON array of labels to add, e.g. ["needs-triage"]'
+    required: false
+    default: "[]"
+  remove:
+    description: 'JSON array of labels to remove'
+    required: false
+    default: "[]"
+  token:
+    description: "GitHub token with issues:write"
+    required: false
+    default: ${{ github.token }}
+runs:
+  using: "composite"
+  steps:
+    - name: Apply label changes
+      uses: actions/github-script@v7
+      with:
+        github-token: ${{ inputs.token }}
+        script: |
+          const { context, github, core } = require('@actions/github');
+          const num = (context.payload.issue || context.payload.pull_request).number;
+          const owner = context.repo.owner;
+          const repo  = context.repo.repo;
+
+          const add = JSON.parse(process.env.ADD);
+          const remove = JSON.parse(process.env.REMOVE);
+
+          if (add.length) {
+            core.info(`Adding labels: ${add.join(", ")}`);
+            await github.rest.issues.addLabels({ owner, repo, issue_number: num, labels: add });
+          }
+
+          if (remove.length) {
+            core.info(`Removing labels: ${remove.join(", ")}`);
+            for (const name of remove) {
+              try {
+                await github.rest.issues.removeLabel({ owner, repo, issue_number: num, name });
+              } catch (e) {
+                core.info(`Label '${name}' not present; skipping`);
+              }
+            }
+          }
+      env:
+        ADD: ${{ inputs.add }}
+        REMOVE: ${{ inputs.remove }}
