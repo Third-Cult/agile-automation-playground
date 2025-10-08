@@ -1,183 +1,222 @@
 name: Validate Feature Request Ticket
 
-on:
+"on":
   workflow_call:
+    inputs:
+      quiet:
+        description: "Suppress validator comments; rely on caller workflow to comment."
+        required: false
+        type: boolean
+        default: false
+    outputs:
+      problems:
+        description: "JSON array of validation problems"
+        value: ${{ jobs.run-validation.outputs.problems }}
+
+permissions:
+  issues: write
+  contents: read
 
 jobs:
   run-validation:
     runs-on: ubuntu-latest
-    permissions:
-      issues: write
+    outputs:
+      problems: ${{ steps.validate.outputs.problems }}
+    env:
+      QUIET: ${{ inputs.quiet }}
 
     steps:
-      - name: Initialize inline config
+      # 1️⃣ Init
+      - name: (1) Init defaults
         id: init
+        run: |
+          echo "🧩 Step 1 — Initializing default labels"
+          echo 'labels_fail=["needs-more-info"]' >> "$GITHUB_OUTPUT"
+          echo 'labels_pass=["needs-triage"]' >> "$GITHUB_OUTPUT"
+
+      # 2️⃣ Read issue data
+      - name: (2) Read issue
+        id: issue
         uses: actions/github-script@v7
         with:
           script: |
-            const issue = context.payload.issue;
-            if (!issue) throw new Error("🚨 ERROR: No issue payload found.");
+            console.log("📖 Step 2 — Fetching issue body & author");
+            const { github, context, core } = require('@actions/github');
+            const { data: issue } = await github.rest.issues.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.issue.number,
+            });
+            console.log(`➡️ Issue author: ${issue.user.login}`);
+            core.setOutput('author', issue.user.login);
+            core.setOutput('body', issue.body || '');
 
-            const config = {
-              marker: "📜 Feature/Enhancement Request 📜",
-              labels: {
-                fail: ["needs-more-info"],
-                pass: ["needs-triage"]
-              },
-              sections: {
-                "Problem Statement / Background": 10,
-                "Goals / Outcomes": 20,
-                "Proposed Solution": 30
-              }
-            };
-
-            core.setOutput("body", issue.body || '');
-            core.setOutput("issue_number", issue.number);
-            core.setOutput("owner", context.repo.owner);
-            core.setOutput("repo", context.repo.repo);
-            core.setOutput("marker", config.marker);
-            core.setOutput("sections", JSON.stringify(config.sections));
-            core.setOutput("labels_fail", JSON.stringify(config.labels.fail));
-            core.setOutput("labels_pass", JSON.stringify(config.labels.pass));
-
-      - name: Check if this is a feature/enhancement request
-        id: check-type
-        env:
-          BODY: ${{ steps.init.outputs.body }}
-          MARKER: ${{ steps.init.outputs.marker }}
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const body = process.env.BODY;
-            const marker = process.env.MARKER;
-
-            const isFeature = body.includes(marker);
-            core.setOutput("is-feature", isFeature);
-
-            if (!isFeature) {
-              console.log("ℹ️ INFO: Not a feature/enhancement request. Skipping.");
-            }
-
-      - name: Validate required sections
+      # 3️⃣ Validate required sections
+      - name: (3) Validate content
         id: validate
-        if: steps.check-type.outputs.is-feature == 'true'
-        env:
-          BODY: ${{ steps.init.outputs.body }}
-          SECTIONS: ${{ steps.init.outputs.sections }}
         uses: actions/github-script@v7
         with:
           script: |
-            const body = process.env.BODY;
-            const sections = JSON.parse(process.env.SECTIONS);
+            console.log("🔍 Step 3 — Running content validation");
+            const { core } = require('@actions/github');
+            const body   = `${{ steps.issue.outputs.body }}`;
+            const author = `${{ steps.issue.outputs.author }}`;
+
             const problems = [];
+            if (!/Problem Statement/i.test(body))  problems.push("• Missing **Problem Statement / Background** section");
+            if (!/Goals/i.test(body))              problems.push("• Missing **Goals / Outcomes** section");
+            if (!/Proposed Solution/i.test(body))  problems.push("• Missing **Proposed Solution** section");
 
-            for (const [section, minLen] of Object.entries(sections)) {
-              try {
-                const regex = new RegExp(`###\\s*${section}[\\s\\S]*?(?=###|$)`, 'i');
-                const match = body.match(regex);
-
-                if (!match) {
-                  problems.push(`- Missing required section: **${section}**`);
-                  console.log(`⚠️ Missing section: ${section}`);
-                } else {
-                  const content = match[0].replace(/^###\s*[^\n]+\n/, '').trim();
-                  if (content.length < minLen) {
-                    problems.push(`- **${section}** is too short (minimum ${minLen} characters)`);
-                    console.log(`🟥 Section too short: ${section}`);
-                  }
-                }
-              } catch (err) {
-                problems.push(`- Error while checking section: **${section}**`);
-              }
-            }
-
+            console.log(`Detected ${problems.length} problems`);
+            core.setOutput("author", author);
             core.setOutput("problems", JSON.stringify(problems));
 
-      - name: Comment and handle failed validation
-        if: steps.validate.outputs.problems != '[]'
-        env:
-          OWNER: ${{ steps.init.outputs.owner }}
-          REPO: ${{ steps.init.outputs.repo }}
-          ISSUE_NUMBER: ${{ steps.init.outputs.issue_number }}
-          PROBLEMS: ${{ steps.validate.outputs.problems }}
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const problems = JSON.parse(process.env.PROBLEMS);
-            const issueAuthor = context.payload.issue.user.login;
-
-            const message = [
-              "**Feature Request Validation Failed**",
+            const failMsg = [
               "",
-              `Howdy @${issueAuthor},`,
+              `Howdy @${author},`,
               "",
               "The following issues were found in this ticket:",
-              problems.join('\n'),
+              problems.join("\\n"),
               "",
-              "Please edit the issue to include or expand the required sections. Until the ticket has passed acceptance checks - it cannot be triaged."
-            ].join('\n');
+              "Please edit the issue to include or expand the required sections above.",
+              "",
+              "_Until the ticket has passed acceptance checks, it cannot be triaged._",
+            ].join("\\n");
 
-            await github.rest.issues.createComment({
-              owner: process.env.OWNER,
-              repo: process.env.REPO,
-              issue_number: Number(process.env.ISSUE_NUMBER),
-              body: message
-            });
+            const passMsg = [
+              `✅ Thanks @${author}!`,
+              "",
+              "Your feature request meets the required sections and can now move forward to triage.",
+            ].join("\\n");
 
-            // Remove 'needs-triage' if it exists
-            try {
-              await github.rest.issues.removeLabel({
-                owner: process.env.OWNER,
-                repo: process.env.REPO,
-                issue_number: Number(process.env.ISSUE_NUMBER),
-                name: "needs-triage"
-              });
-            } catch (e) {
-              console.log("ℹ️ INFO: 'needs-triage' label was not present.");
-            }
+            core.setOutput("fail_message", failMsg);
+            core.setOutput("pass_message", passMsg);
 
-            // Assign the author
-            await github.rest.issues.addAssignees({
-              owner: process.env.OWNER,
-              repo: process.env.REPO,
-              issue_number: Number(process.env.ISSUE_NUMBER),
-              assignees: [issueAuthor]
-            });
+      # 4️⃣ Comment / failure
+      - name: (4) Comment — failure
+        if: ${{ steps.validate.outputs.problems != '[]' && env.QUIET != 'true' }}
+        uses: ./.github/workflows/post-comment.yaml
+        with:
+          body: ${{ steps.validate.outputs.fail_message }}
 
-            await core.summary
-              .addHeading('❌ Feature Request Validation Failed')
-              .addList(problems)
-              .addQuote('Please update the ticket and rerun the validation.')
-              .write();
+      # 5️⃣ Comment / success
+      - name: (5) Comment — success
+        if: ${{ steps.validate.outputs.problems == '[]' && env.QUIET != 'true' }}
+        uses: ./.github/workflows/post-comment.yaml
+        with:
+          body: ${{ steps.validate.outputs.pass_message }}
 
-      - name: Apply failure labels
-        if: steps.validate.outputs.problems != '[]'
+      # 6️⃣ Labels — failure
+      - name: (6) Labels — add needs-more-info
+        if: ${{ steps.validate.outputs.problems != '[]' }}
         uses: ./.github/workflows/manage-labels.yaml
         with:
           add: ${{ steps.init.outputs.labels_fail }}
 
-      - name: Comment and handle successful validation
-        if: steps.validate.outputs.problems == '[]'
-        env:
-          OWNER: ${{ steps.init.outputs.owner }}
-          REPO: ${{ steps.init.outputs.repo }}
-          ISSUE_NUMBER: ${{ steps.init.outputs.issue_number }}
+      - name: (7) Labels — remove needs-triage on failure
+        if: ${{ steps.validate.outputs.problems != '[]' }}
         uses: actions/github-script@v7
         with:
           script: |
-            const issueAuthor = context.payload.issue.user.login;
+            console.log("🏷️ Step 7 — Removing 'needs-triage' (failure)");
+            const { github, context } = require('@actions/github');
+            try {
+              await github.rest.issues.removeLabel({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.payload.issue.number,
+                name: "needs-triage",
+              });
+            } catch { console.log("Label not present; skipping"); }
 
-            await core.summary
-              .addHeading('✅ Feature Request Validation Passed')
-              .addRaw(`@${issueAuthor}'s ticket meets all section requirements.`)
-              .write();
-
-      - name: Apply success labels
-        if: steps.validate.outputs.problems == '[]'
+      # 8️⃣ Labels — success
+      - name: (8) Labels — add needs-triage
+        if: ${{ steps.validate.outputs.problems == '[]' }}
         uses: ./.github/workflows/manage-labels.yaml
         with:
           add: ${{ steps.init.outputs.labels_pass }}
 
-      - name: Echo problems to output
+      - name: (9) Labels — remove needs-more-info on success
+        if: ${{ steps.validate.outputs.problems == '[]' }}
+        uses: actions/github-script@v7
+        with:
+          script: |
+            console.log("🏷️ Step 9 — Removing 'needs-more-info' (success)");
+            const { github, context } = require('@actions/github');
+            try {
+              await github.rest.issues.removeLabel({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.payload.issue.number,
+                name: "needs-more-info",
+              });
+            } catch { console.log("Label not present; skipping"); }
+
+      # 🔟 Assignments
+      - name: (10) Assign author (failure)
+        if: ${{ steps.validate.outputs.problems != '[]' }}
+        uses: ./.github/workflows/manage-assignees.yaml
+        with:
+          action: add
+          assignees: ${{ format('["{0}"]', steps.validate.outputs.author) }}
+
+      - name: (11) Unassign author (success)
+        if: ${{ steps.validate.outputs.problems == '[]' }}
+        uses: actions/github-script@v7
+        with:
+          script: |
+            console.log("👤 Step 11 — Unassigning author (success)");
+            const { github, context } = require('@actions/github');
+            const author = `${{ steps.validate.outputs.author }}`;
+            const { data: current } = await github.rest.issues.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.issue.number,
+            });
+            const assignees = current.assignees.map(a => a.login);
+            if (assignees.includes(author)) {
+              await github.rest.issues.removeAssignees({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.payload.issue.number,
+                assignees: [author],
+              });
+              console.log(`✅ Removed ${author} from assignees`);
+            } else {
+              console.log("No removal needed — not assigned");
+            }
+
+      # 1️⃣2️⃣ Summaries
+      - name: (12) Summary — failed validation
+        if: ${{ steps.validate.outputs.problems != '[]' }}
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { core } = require('@actions/github');
+            const problems = JSON.parse(`${{ steps.validate.outputs.problems }}`);
+            console.log("📋 Step 12 — Writing failure summary");
+            await core.summary
+              .addHeading("❌ Feature Request Validation Failed")
+              .addList(problems)
+              .addQuote("Please update the ticket and rerun the validation.")
+              .write();
+
+      - name: (13) Summary — passed validation
+        if: ${{ steps.validate.outputs.problems == '[]' }}
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { core } = require('@actions/github');
+            const author = `${{ steps.validate.outputs.author }}`;
+            console.log("📋 Step 13 — Writing success summary");
+            await core.summary
+              .addHeading("✅ Feature Request Validation Passed")
+              .addRaw(`@${author}'s ticket meets all section requirements.`)
+              .write();
+
+      # 1️⃣4️⃣ Echo problems output
+      - name: (14) Output problems
         if: always()
-        run: echo "problems=${{ steps.validate.outputs.problems }}" >> $GITHUB_OUTPUT
+        run: |
+          echo "📤 Step 14 — Exporting problems output"
+          echo "problems=${{ steps.validate.outputs.problems }}" >> "$GITHUB_OUTPUT"
