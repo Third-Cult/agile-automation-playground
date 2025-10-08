@@ -26,7 +26,6 @@ jobs:
       QUIET: ${{ inputs.quiet }}
 
     steps:
-      # 1️⃣ Init
       - name: (1) Init defaults
         id: init
         run: |
@@ -34,31 +33,27 @@ jobs:
           echo 'labels_fail=["needs-more-info"]' >> "$GITHUB_OUTPUT"
           echo 'labels_pass=["needs-triage"]' >> "$GITHUB_OUTPUT"
 
-      # 2️⃣ Read issue data
       - name: (2) Read issue
         id: issue
         uses: actions/github-script@v7
         with:
           script: |
             console.log("📖 Step 2 — Fetching issue body & author");
-            const { github, context, core } = require('@actions/github');
-            const { data: issue } = await github.rest.issues.get({
+            const { data: i } = await github.rest.issues.get({
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: context.payload.issue.number,
             });
-            console.log(`➡️ Issue author: ${issue.user.login}`);
-            core.setOutput('author', issue.user.login);
-            core.setOutput('body', issue.body || '');
+            console.log(`➡️ Issue author: ${i.user.login}`);
+            core.setOutput('author', i.user.login);
+            core.setOutput('body', i.body || '');
 
-      # 3️⃣ Validate required sections
       - name: (3) Validate content
         id: validate
         uses: actions/github-script@v7
         with:
           script: |
             console.log("🔍 Step 3 — Running content validation");
-            const { core } = require('@actions/github');
             const body   = `${{ steps.issue.outputs.body }}`;
             const author = `${{ steps.issue.outputs.author }}`;
 
@@ -92,67 +87,42 @@ jobs:
             core.setOutput("fail_message", failMsg);
             core.setOutput("pass_message", passMsg);
 
-      # 4️⃣ Comment / failure
       - name: (4) Comment — failure
         if: ${{ steps.validate.outputs.problems != '[]' && env.QUIET != 'true' }}
         uses: ./.github/actions/post-comment
         with:
           body: ${{ steps.validate.outputs.fail_message }}
 
-      # 5️⃣ Comment / success
       - name: (5) Comment — success
         if: ${{ steps.validate.outputs.problems == '[]' && env.QUIET != 'true' }}
         uses: ./.github/actions/post-comment
         with:
           body: ${{ steps.validate.outputs.pass_message }}
 
-      # 6️⃣ Labels — failure
       - name: (6) Labels — add needs-more-info
         if: ${{ steps.validate.outputs.problems != '[]' }}
-        uses: ./.github/actions/manage-labels.
+        uses: ./.github/actions/manage-labels
         with:
-          add: ${{ steps.init.outputs.labels_fail }}
+          add: '["needs-more-info"]'
 
       - name: (7) Labels — remove needs-triage on failure
         if: ${{ steps.validate.outputs.problems != '[]' }}
-        uses: actions/github-script@v7
+        uses: ./.github/actions/manage-labels
         with:
-          script: |
-            console.log("🏷️ Step 7 — Removing 'needs-triage' (failure)");
-            const { github, context } = require('@actions/github');
-            try {
-              await github.rest.issues.removeLabel({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: context.payload.issue.number,
-                name: "needs-triage",
-              });
-            } catch { console.log("Label not present; skipping"); }
+          remove: '["needs-triage"]'
 
-      # 8️⃣ Labels — success
       - name: (8) Labels — add needs-triage
         if: ${{ steps.validate.outputs.problems == '[]' }}
         uses: ./.github/actions/manage-labels
         with:
-          add: ${{ steps.init.outputs.labels_pass }}
+          add: '["needs-triage"]'
 
       - name: (9) Labels — remove needs-more-info on success
         if: ${{ steps.validate.outputs.problems == '[]' }}
-        uses: actions/github-script@v7
+        uses: ./.github/actions/manage-labels
         with:
-          script: |
-            console.log("🏷️ Step 9 — Removing 'needs-more-info' (success)");
-            const { github, context } = require('@actions/github');
-            try {
-              await github.rest.issues.removeLabel({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: context.payload.issue.number,
-                name: "needs-more-info",
-              });
-            } catch { console.log("Label not present; skipping"); }
+          remove: '["needs-more-info"]'
 
-      # 🔟 Assignments
       - name: (10) Assign author (failure)
         if: ${{ steps.validate.outputs.problems != '[]' }}
         uses: ./.github/actions/manage-assignees
@@ -162,37 +132,16 @@ jobs:
 
       - name: (11) Unassign author (success)
         if: ${{ steps.validate.outputs.problems == '[]' }}
-        uses: actions/github-script@v7
+        uses: ./.github/actions/manage-assignees
         with:
-          script: |
-            console.log("👤 Step 11 — Unassigning author (success)");
-            const { github, context } = require('@actions/github');
-            const author = `${{ steps.validate.outputs.author }}`;
-            const { data: current } = await github.rest.issues.get({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.payload.issue.number,
-            });
-            const assignees = current.assignees.map(a => a.login);
-            if (assignees.includes(author)) {
-              await github.rest.issues.removeAssignees({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: context.payload.issue.number,
-                assignees: [author],
-              });
-              console.log(`✅ Removed ${author} from assignees`);
-            } else {
-              console.log("No removal needed — not assigned");
-            }
+          action: remove
+          assignees: ${{ format('["{0}"]', steps.validate.outputs.author) }}
 
-      # 1️⃣2️⃣ Summaries
       - name: (12) Summary — failed validation
         if: ${{ steps.validate.outputs.problems != '[]' }}
         uses: actions/github-script@v7
         with:
           script: |
-            const { core } = require('@actions/github');
             const problems = JSON.parse(`${{ steps.validate.outputs.problems }}`);
             console.log("📋 Step 12 — Writing failure summary");
             await core.summary
@@ -206,7 +155,6 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
-            const { core } = require('@actions/github');
             const author = `${{ steps.validate.outputs.author }}`;
             console.log("📋 Step 13 — Writing success summary");
             await core.summary
@@ -214,7 +162,6 @@ jobs:
               .addRaw(`@${author}'s ticket meets all section requirements.`)
               .write();
 
-      # 1️⃣4️⃣ Echo problems output
       - name: (14) Output problems
         if: always()
         run: |

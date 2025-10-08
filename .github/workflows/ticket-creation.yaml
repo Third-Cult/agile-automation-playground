@@ -13,7 +13,6 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # 1️⃣ Gate: detect Feature vs. non-Feature (label or hidden marker)
   gate:
     runs-on: ubuntu-latest
     outputs:
@@ -27,14 +26,13 @@ jobs:
         with:
           script: |
             console.log("🧭 Step 1 — Determining whether this is a Feature ticket");
-            const { context, core } = require('@actions/github');
             const issue  = context.payload.issue;
             const labels = (issue.labels || []).map(l => l.name);
             const body   = issue.body || "";
             const author = issue.user?.login || "unknown";
 
-            const byLabel  = labels.includes("type: feature");                 // from Issue Form labels
-            const byMarker = body.includes("📜 Feature/Enhancement Request 📜"); // hidden marker (back-compat)
+            const byLabel  = labels.includes("type: feature");
+            const byMarker = body.includes("📜 Feature/Enhancement Request 📜");
             const isFeature = byLabel || byMarker;
 
             const reason = isFeature
@@ -50,7 +48,6 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
-            const { core } = require('@actions/github');
             await core.summary
               .addHeading('✳️ Ticket Created — Gate Decision')
               .addTable([
@@ -60,31 +57,24 @@ jobs:
               ])
               .write()
 
-  # 2️⃣ Add to default Project (your reusable workflow)
   add-to-default-project:
     needs: gate
     uses: ./.github/workflows/add-to-default-project.yaml
     with:
-      project-id: ${{ vars.PROJECT_V2_ID }}   # <— set this repo/org variable to your ProjectV2 node ID (PVT_…)
+      project-id: ${{ vars.PROJECT_V2_ID }}
     secrets:
-      token: ${{ secrets.PROJECT_PAT }}       # <— PAT or fine-grained token with project write access
+      token: ${{ secrets.PROJECT_PAT }}
 
-  # 3️⃣ For Feature issues: run validator (not quiet on creation so it posts your comment)
   validate-feature-type:
-    needs:
-      - gate
-      - add-to-default-project
+    needs: [gate, add-to-default-project]
     if: ${{ needs.gate.outputs.is_feature == 'true' }}
     uses: ./.github/workflows/feature-request-validation.yaml
     with:
       quiet: false
     secrets: inherit
 
-  # 4️⃣ For non-Feature issues: add the triage label immediately
   label-non-feature:
-    needs:
-      - gate
-      - add-to-default-project
+    needs: [gate, add-to-default-project]
     if: ${{ needs.gate.outputs.is_feature != 'true' }}
     runs-on: ubuntu-latest
     steps:
@@ -92,17 +82,11 @@ jobs:
         uses: ./.github/actions/manage-labels
         with:
           add: '["needs-triage"]'
-
       - name: (4) Log
         run: echo "🏷️ Non-feature ticket labeled with needs-triage"
 
-  # 5️⃣ Final run summary (always)
   summarize:
-    needs:
-      - gate
-      - add-to-default-project
-      - validate-feature-type
-      - label-non-feature
+    needs: [gate, add-to-default-project, validate-feature-type, label-non-feature]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -110,7 +94,6 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
-            const { core } = require('@actions/github');
             await core.summary
               .addHeading('📊 Ticket Created — Intake Summary')
               .addTable([

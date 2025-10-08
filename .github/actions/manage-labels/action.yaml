@@ -21,7 +21,6 @@ runs:
       with:
         github-token: ${{ inputs.token }}
         script: |
-          const { context, github, core } = require('@actions/github');
           const num = (context.payload.issue || context.payload.pull_request).number;
           const owner = context.repo.owner;
           const repo  = context.repo.repo;
@@ -39,7 +38,7 @@ runs:
             for (const name of remove) {
               try {
                 await github.rest.issues.removeLabel({ owner, repo, issue_number: num, name });
-              } catch (e) {
+              } catch {
                 core.info(`Label '${name}' not present; skipping`);
               }
             }

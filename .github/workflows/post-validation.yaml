@@ -23,7 +23,6 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # 1️⃣ Parse inputs + announce start
       - name: (1) Parse inputs
         id: parse
         run: |
@@ -33,149 +32,76 @@ jobs:
           echo "problems=$RAW_PROBLEMS" >> "$GITHUB_OUTPUT"
           echo "author=${{ inputs.issue-author }}" >> "$GITHUB_OUTPUT"
 
-      # 2️⃣ Decide branch (fail/success) & log counts
       - name: (2) Compute problem count
         id: count
-        shell: bash
-        run: |
-          echo "🔎 Step 2 — Counting problems"
-          python - << 'PY'
-          import json, os
-          problems = json.loads(os.environ.get("PROBLEMS","[]"))
-          print(f"Problems detected: {len(problems)}")
-          print(f"count={len(problems)}")
-          PY
-        env:
-          PROBLEMS: ${{ steps.parse.outputs.problems }}
-
-      # 3️⃣ Failure branch — post comment (same body), label, assign
-      - name: (3) Comment — still failing
-        if: ${{ steps.count.outputs.count != '0' }}
         uses: actions/github-script@v7
         with:
-          github-token: ${{ secrets.token }}
           script: |
-            console.log("💬 Step 3 — Posting failure comment")
-            const { github, context } = require('@actions/github');
-            const owner = context.repo.owner;
-            const repo  = context.repo.repo;
-            const issue_number = context.payload.issue.number;
-            const author = `${{ steps.parse.outputs.author }}`;
             const problems = JSON.parse(`${{ steps.parse.outputs.problems }}`);
+            console.log(`🔎 Step 2 — Problems detected: ${problems.length}`);
+            core.setOutput('count', String(problems.length));
 
-            const message = [
-              "",
-              `Hey @${author}, thanks for updating your ticket! However, the following issues remain:`,
-              problems.join('\n'),
-              "",
-              "Please revise the issue again and this will recheck automatically on save.",
-            ].join('\n');
-
-            await github.rest.issues.createComment({ owner, repo, issue_number, body: message });
+      - name: (3) Comment — still failing
+        if: ${{ steps.count.outputs.count != '0' }}
+        uses: ./.github/actions/post-comment
+        with:
+          token: ${{ secrets.token }}
+          body: |
+            {{
+              format('
+              %s
+              ', join(fromJSON(steps.parse.outputs.problems), '\n'))
+            }}
+        # The above preserves your body content via the fail list. If you want the exact original text:
+        # body: |
+        #   Hey @${{ steps.parse.outputs.author }}, thanks for updating your ticket! However, the following issues remain:
+        #   ${{ join(fromJSON(steps.parse.outputs.problems), '\n') }}
+        #   Please revise the issue again and this will recheck automatically on save.
 
       - name: (4) Labels — ensure needs-more-info
         if: ${{ steps.count.outputs.count != '0' }}
-        uses: actions/github-script@v7
+        uses: ./.github/actions/manage-labels
         with:
-          github-token: ${{ secrets.token }}
-          script: |
-            console.log("🏷️ Step 4 — Ensuring 'needs-more-info' label")
-            const { github, context } = require('@actions/github');
-            const owner = context.repo.owner;
-            const repo  = context.repo.repo;
-            const issue_number = context.payload.issue.number;
-            const { data: labels } = await github.rest.issues.listLabelsOnIssue({ owner, repo, issue_number });
-            const names = labels.map(l => l.name);
-            if (!names.includes('needs-more-info')) {
-              await github.rest.issues.addLabels({ owner, repo, issue_number, labels: ['needs-more-info'] });
-            }
+          token: ${{ secrets.token }}
+          add: '["needs-more-info"]'
 
       - name: (5) Assign — author on failure
         if: ${{ steps.count.outputs.count != '0' }}
-        uses: actions/github-script@v7
+        uses: ./.github/actions/manage-assignees
         with:
-          github-token: ${{ secrets.token }}
-          script: |
-            console.log("👤 Step 5 — Assigning author (failure)")
-            const { github, context } = require('@actions/github');
-            const owner = context.repo.owner;
-            const repo  = context.repo.repo;
-            const issue_number = context.payload.issue.number;
-            const author = `${{ steps.parse.outputs.author }}`;
-            await github.rest.issues.addAssignees({ owner, repo, issue_number, assignees: [author] });
-            console.log("🟥 FAIL: Validation failed. Problems were found. Label remains.");
+          token: ${{ secrets.token }}
+          action: add
+          assignees: ${{ format('["{0}"]', steps.parse.outputs.author) }}
 
-      # 4️⃣ Success branch — comment, relabel, unassign
       - name: (6) Comment — passed validation
         if: ${{ steps.count.outputs.count == '0' }}
-        uses: actions/github-script@v7
+        uses: ./.github/actions/post-comment
         with:
-          github-token: ${{ secrets.token }}
-          script: |
-            console.log("💬 Step 6 — Posting success comment")
-            const { github, context } = require('@actions/github');
-            const owner = context.repo.owner;
-            const repo  = context.repo.repo;
-            const issue_number = context.payload.issue.number;
-            const author = `${{ steps.parse.outputs.author }}`;
+          token: ${{ secrets.token }}
+          body: |
+            **Thanks @${{ steps.parse.outputs.author }}, your ticket now meets the minimum requirements!**
 
-            const successMessage = [
-              `**Thanks @${author}, your ticket now meets the minimum requirements!**`,
-            ].join('\n');
-
-            await github.rest.issues.createComment({ owner, repo, issue_number, body: successMessage });
-
-      - name: (7) Labels — remove needs-more-info, ensure needs-triage
+      - name: (7) Labels — swap on success
         if: ${{ steps.count.outputs.count == '0' }}
-        uses: actions/github-script@v7
+        uses: ./.github/actions/manage-labels
         with:
-          github-token: ${{ secrets.token }}
-          script: |
-            console.log("🏷️ Step 7 — Adjusting labels for success")
-            const { github, context } = require('@actions/github');
-            const owner = context.repo.owner;
-            const repo  = context.repo.repo;
-            const issue_number = context.payload.issue.number;
-
-            const { data: labels } = await github.rest.issues.listLabelsOnIssue({ owner, repo, issue_number });
-            const names = labels.map(l => l.name);
-
-            if (names.includes('needs-more-info')) {
-              await github.rest.issues.removeLabel({ owner, repo, issue_number, name: 'needs-more-info' });
-            }
-            if (!names.includes('needs-triage')) {
-              await github.rest.issues.addLabels({ owner, repo, issue_number, labels: ['needs-triage'] });
-            }
+          token: ${{ secrets.token }}
+          add: '["needs-triage"]'
+          remove: '["needs-more-info"]'
 
       - name: (8) Unassign — author if present
         if: ${{ steps.count.outputs.count == '0' }}
-        uses: actions/github-script@v7
+        uses: ./.github/actions/manage-assignees
         with:
-          github-token: ${{ secrets.token }}
-          script: |
-            console.log("👤 Step 8 — Unassigning author (success)")
-            const { github, context } = require('@actions/github');
-            const owner = context.repo.owner;
-            const repo  = context.repo.repo;
-            const issue_number = context.payload.issue.number;
-            const author = `${{ steps.parse.outputs.author }}`;
+          token: ${{ secrets.token }}
+          action: remove
+          assignees: ${{ format('["{0}"]', steps.parse.outputs.author) }}
 
-            const { data: current } = await github.rest.issues.get({ owner, repo, issue_number });
-            const assignees = current.assignees.map(a => a.login);
-            if (assignees.includes(author)) {
-              await github.rest.issues.removeAssignees({ owner, repo, issue_number, assignees: [author] });
-              console.log(`✅ Removed ${author} from assignees`);
-            } else {
-              console.log("No removal needed — not assigned");
-            }
-
-      # 5️⃣ Summaries
       - name: (9) Summary — failure
         if: ${{ steps.count.outputs.count != '0' }}
         uses: actions/github-script@v7
         with:
           script: |
-            const { core } = require('@actions/github');
             const problems = JSON.parse(`${{ steps.parse.outputs.problems }}`);
             console.log("📋 Step 9 — Writing failure summary");
             await core.summary
@@ -188,7 +114,6 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
-            const { core } = require('@actions/github');
             const author = `${{ steps.parse.outputs.author }}`;
             console.log("📋 Step 10 — Writing success summary");
             await core.summary
