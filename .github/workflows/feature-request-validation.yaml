@@ -89,50 +89,50 @@ jobs:
 
       - name: (4) Comment — failure
         if: ${{ steps.validate.outputs.problems != '[]' && env.QUIET != 'true' }}
-        uses: ./.github/actions/post-comment
+        uses: ./.github/workflows/post-comment
         with:
           body: ${{ steps.validate.outputs.fail_message }}
 
       - name: (5) Comment — success
         if: ${{ steps.validate.outputs.problems == '[]' && env.QUIET != 'true' }}
-        uses: ./.github/actions/post-comment
+        uses: ./.github/workflows/post-comment
         with:
           body: ${{ steps.validate.outputs.pass_message }}
 
       - name: (6) Labels — add needs-more-info
         if: ${{ steps.validate.outputs.problems != '[]' }}
-        uses: ./.github/actions/manage-labels
+        uses: ./.github/workflows/manage-labels
         with:
           add: '["needs-more-info"]'
 
       - name: (7) Labels — remove needs-triage on failure
         if: ${{ steps.validate.outputs.problems != '[]' }}
-        uses: ./.github/actions/manage-labels
+        uses: ./.github/workflows/manage-labels
         with:
           remove: '["needs-triage"]'
 
       - name: (8) Labels — add needs-triage
         if: ${{ steps.validate.outputs.problems == '[]' }}
-        uses: ./.github/actions/manage-labels
+        uses: ./.github/workflows/manage-labels
         with:
           add: '["needs-triage"]'
 
       - name: (9) Labels — remove needs-more-info on success
         if: ${{ steps.validate.outputs.problems == '[]' }}
-        uses: ./.github/actions/manage-labels
+        uses: ./.github/workflows/manage-labels
         with:
           remove: '["needs-more-info"]'
 
       - name: (10) Assign author (failure)
         if: ${{ steps.validate.outputs.problems != '[]' }}
-        uses: ./.github/actions/manage-assignees
+        uses: ./.github/workflows/manage-assignees
         with:
           action: add
           assignees: ${{ format('["{0}"]', steps.validate.outputs.author) }}
 
       - name: (11) Unassign author (success)
         if: ${{ steps.validate.outputs.problems == '[]' }}
-        uses: ./.github/actions/manage-assignees
+        uses: ./.github/workflows/manage-assignees
         with:
           action: remove
           assignees: ${{ format('["{0}"]', steps.validate.outputs.author) }}

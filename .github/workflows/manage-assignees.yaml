@@ -1,93 +1,34 @@
 name: Manage Assignees
-
-on:
+"on":
   workflow_call:
     inputs:
       action:
-        description: "'add' or 'remove'"
         required: true
-        type: string
+        type: string  # "add" | "remove"
       assignees:
-        description: "JSON array of usernames, e.g. [\"octocat\"]"
         required: true
-        type: string
+        type: string  # JSON array string, e.g. ["octocat"]
     secrets:
       token:
-        description: "GitHub token with issues scope"
         required: true
 
-jobs:
-  manage-assignees:
-    runs-on: ubuntu-latest
-    permissions:
-      issues: write
+permissions:
+  issues: write
+  contents: read
 
+jobs:
+  assignees:
+    runs-on: ubuntu-latest
     steps:
-      - name: Add or remove assignees
-        uses: actions/github-script@v7
+      - uses: actions/github-script@v7
         with:
           github-token: ${{ secrets.token }}
           script: |
-            try {
-              const action = '${{ inputs.action }}'.toLowerCase();
-              const rawInput = '${{ inputs.assignees }}';
-              const { owner, repo } = context.repo;
-              const issue_number = context.issue.number;
-
-              if (!['add', 'remove'].includes(action)) {
-                core.setFailed(`🚨 ERROR: Invalid action '${action}'. Must be 'add' or 'remove'.`);
-                return;
-              }
-
-              let assignees = [];
-              try {
-                assignees = JSON.parse(rawInput);
-                if (!Array.isArray(assignees)) throw new Error("Parsed assignees is not an array");
-              } catch (err) {
-                core.setFailed("🚨 ERROR: 'assignees' must be a valid JSON array string");
-                return;
-              }
-
-              if (!issue_number) {
-                core.setFailed("🚨 ERROR: No issue or pull request number found in context.");
-                return;
-              }
-
-              core.info(`ℹ️ INFO: Action = ${action}`);
-              core.info(`ℹ️ INFO: Target assignees = ${assignees.join(', ')}`);
-
-              // Fetch current assignees
-              const current = context.payload.issue.assignees.map(a => a.login);
-              const toProcess = assignees.filter(user =>
-                action === 'add' ? !current.includes(user) : current.includes(user)
-              );
-
-              if (toProcess.length === 0) {
-                core.info(`ℹ️ INFO: No assignees need to be ${action}ed.`);
-              } else {
-                const op = action === 'add'
-                  ? github.rest.issues.addAssignees
-                  : github.rest.issues.removeAssignees;
-
-                await op({
-                  owner,
-                  repo,
-                  issue_number,
-                  assignees: toProcess
-                });
-
-                core.info(`✅ SUCCESS: ${action === 'add' ? 'Assigned' : 'Unassigned'}: ${toProcess.join(', ')}`);
-              }
-
-              await core.summary
-                .addHeading(`👥 Assignee Management Summary`)
-                .addRaw(`**Action**: ${action === 'add' ? 'Add Assignees' : 'Remove Assignees'}`)
-                .addBreak()
-                .addRaw(`**Target Users**: ${assignees.join(', ') || 'None'}`)
-                .addBreak()
-                .addRaw(`**Actually ${action}ed**: ${toProcess.length ? toProcess.join(', ') : 'None'}`)
-                .write();
-
-            } catch (err) {
-              core.setFailed(`🚨 ERROR: Unexpected failure during assignee management: ${err.message}`);
+            const number = (context.payload.issue ?? context.payload.pull_request).number;
+            const action = `${{ inputs.action }}`;
+            const assignees = JSON.parse(`${{ inputs.assignees }}`);
+            if (action === 'add') {
+              await github.rest.issues.addAssignees({ owner: context.repo.owner, repo: context.repo.repo, issue_number: number, assignees });
+            } else {
+              await github.rest.issues.removeAssignees({ owner: context.repo.owner, repo: context.repo.repo, issue_number: number, assignees });
             }
