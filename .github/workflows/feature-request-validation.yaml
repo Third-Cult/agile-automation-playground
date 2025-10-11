@@ -85,7 +85,7 @@ jobs:
     with:
       body: ${{ needs.validate.outputs.fail_message }}
     secrets:
-      token: ${{ github.token }}
+      token: ${{ secrets.PROJECT_PAT  }}
 
   # 3) Success branch — comment
   comment-success:
@@ -95,7 +95,7 @@ jobs:
     with:
       body: ${{ needs.validate.outputs.pass_message }}
     secrets:
-      token: ${{ github.token }}
+      token: ${{ secrets.PROJECT_PAT  }}
 
   # 4) Failure branch — labels (add needs-more-info, remove needs-triage)
   labels-failure:
@@ -106,7 +106,7 @@ jobs:
       add:    '["needs-more-info"]'
       remove: '["needs-triage"]'
     secrets:
-      token: ${{ github.token }}
+      token: ${{ secrets.PROJECT_PAT  }}
 
   # 5) Success branch — labels (add needs-triage, remove needs-more-info)
   labels-success:
@@ -117,7 +117,7 @@ jobs:
       add:    '["needs-triage"]'
       remove: '["needs-more-info"]'
     secrets:
-      token: ${{ github.token }}
+      token: ${{ secrets.PROJECT_PAT }}
 
   # 6) Failure branch — assign author
   assign-author-on-failure:
@@ -128,7 +128,7 @@ jobs:
       action: add
       assignees: ${{ format('["{0}"]', needs.validate.outputs.author) }}
     secrets:
-      token: ${{ github.token }}
+      token: ${{ secrets.PROJECT_PAT  }}
 
   # 7) Success branch — unassign author
   unassign-author-on-success:
@@ -139,4 +139,4 @@ jobs:
       action: remove
       assignees: ${{ format('["{0}"]', needs.validate.outputs.author) }}
     secrets:
-      token: ${{ github.token }}
+      token: ${{ secrets.PROJECT_PAT }}
