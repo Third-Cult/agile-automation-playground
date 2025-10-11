@@ -1,68 +1,58 @@
-name: Validate Feature Request Ticket
+name: Validate Feature Request Ticket (multi-job)
 
 "on":
   workflow_call:
     inputs:
       quiet:
-        description: "Suppress validator comments; rely on caller workflow to comment."
+        description: "Suppress validator comments; rely on caller to comment."
         required: false
         type: boolean
         default: false
     outputs:
       problems:
         description: "JSON array of validation problems"
-        value: ${{ jobs.run-validation.outputs.problems }}
+        value: ${{ jobs.validate.outputs.problems }}
 
 permissions:
   issues: write
   contents: read
 
 jobs:
-  run-validation:
+  # 1) Validate and surface outputs
+  validate:
     runs-on: ubuntu-latest
     outputs:
-      problems: ${{ steps.validate.outputs.problems }}
-    env:
-      QUIET: ${{ inputs.quiet }}
-
+      problems:     ${{ steps.validate.outputs.problems }}
+      author:       ${{ steps.validate.outputs.author }}
+      fail_message: ${{ steps.validate.outputs.fail_message }}
+      pass_message: ${{ steps.validate.outputs.pass_message }}
     steps:
-      - name: (1) Init defaults
-        id: init
-        run: |
-          echo "🧩 Step 1 — Initializing default labels"
-          echo 'labels_fail=["needs-more-info"]' >> "$GITHUB_OUTPUT"
-          echo 'labels_pass=["needs-triage"]' >> "$GITHUB_OUTPUT"
-
-      - name: (2) Read issue
-        id: issue
+      - name: Read issue (author + body)
+        id: read
         uses: actions/github-script@v7
         with:
           script: |
-            console.log("📖 Step 2 — Fetching issue body & author");
             const { data: i } = await github.rest.issues.get({
               owner: context.repo.owner,
-              repo: context.repo.repo,
+              repo:  context.repo.repo,
               issue_number: context.payload.issue.number,
             });
-            console.log(`➡️ Issue author: ${i.user.login}`);
             core.setOutput('author', i.user.login);
             core.setOutput('body', i.body || '');
 
-      - name: (3) Validate content
+      - name: Validate content
         id: validate
         uses: actions/github-script@v7
         with:
           script: |
-            console.log("🔍 Step 3 — Running content validation");
-            const body   = `${{ steps.issue.outputs.body }}`;
-            const author = `${{ steps.issue.outputs.author }}`;
+            const body   = `${{ steps.read.outputs.body }}`;
+            const author = `${{ steps.read.outputs.author }}`;
 
             const problems = [];
             if (!/Problem Statement/i.test(body))  problems.push("• Missing **Problem Statement / Background** section");
             if (!/Goals/i.test(body))              problems.push("• Missing **Goals / Outcomes** section");
             if (!/Proposed Solution/i.test(body))  problems.push("• Missing **Proposed Solution** section");
 
-            console.log(`Detected ${problems.length} problems`);
             core.setOutput("author", author);
             core.setOutput("problems", JSON.stringify(problems));
 
@@ -87,83 +77,66 @@ jobs:
             core.setOutput("fail_message", failMsg);
             core.setOutput("pass_message", passMsg);
 
-      - name: (4) Comment — failure
-        if: ${{ steps.validate.outputs.problems != '[]' && env.QUIET != 'true' }}
-        uses: ./.github/workflows/post-comment.yaml
-        with:
-          body: ${{ steps.validate.outputs.fail_message }}
+  # 2) Failure branch — comment
+  comment-failure:
+    needs: validate
+    if: ${{ inputs.quiet != true && needs.validate.outputs.problems != '[]' }}
+    uses: ./.github/workflows/post-comment.yaml
+    with:
+      body: ${{ needs.validate.outputs.fail_message }}
+    secrets:
+      token: ${{ github.token }}
 
-      - name: (5) Comment — success
-        if: ${{ steps.validate.outputs.problems == '[]' && env.QUIET != 'true' }}
-        uses: ./.github/workflows/post-comment.yaml
-        with:
-          body: ${{ steps.validate.outputs.pass_message }}
+  # 3) Success branch — comment
+  comment-success:
+    needs: validate
+    if: ${{ inputs.quiet != true && needs.validate.outputs.problems == '[]' }}
+    uses: ./.github/workflows/post-comment.yaml
+    with:
+      body: ${{ needs.validate.outputs.pass_message }}
+    secrets:
+      token: ${{ github.token }}
 
-      - name: (6) Labels — add needs-more-info
-        if: ${{ steps.validate.outputs.problems != '[]' }}
-        uses: ./.github/workflows/manage-labels.yaml
-        with:
-          add: '["needs-more-info"]'
+  # 4) Failure branch — labels (add needs-more-info, remove needs-triage)
+  labels-failure:
+    needs: validate
+    if: ${{ needs.validate.outputs.problems != '[]' }}
+    uses: ./.github/workflows/manage-labels.yaml
+    with:
+      add:    '["needs-more-info"]'
+      remove: '["needs-triage"]'
+    secrets:
+      token: ${{ github.token }}
 
-      - name: (7) Labels — remove needs-triage on failure
-        if: ${{ steps.validate.outputs.problems != '[]' }}
-        uses: ./.github/workflows/manage-labels.yaml
-        with:
-          remove: '["needs-triage"]'
+  # 5) Success branch — labels (add needs-triage, remove needs-more-info)
+  labels-success:
+    needs: validate
+    if: ${{ needs.validate.outputs.problems == '[]' }}
+    uses: ./.github/workflows/manage-labels.yaml
+    with:
+      add:    '["needs-triage"]'
+      remove: '["needs-more-info"]'
+    secrets:
+      token: ${{ github.token }}
 
-      - name: (8) Labels — add needs-triage
-        if: ${{ steps.validate.outputs.problems == '[]' }}
-        uses: ./.github/workflows/manage-labels.yaml
-        with:
-          add: '["needs-triage"]'
+  # 6) Failure branch — assign author
+  assign-author-on-failure:
+    needs: validate
+    if: ${{ needs.validate.outputs.problems != '[]' }}
+    uses: ./.github/workflows/manage-assignees.yaml
+    with:
+      action: add
+      assignees: ${{ format('["{0}"]', needs.validate.outputs.author) }}
+    secrets:
+      token: ${{ github.token }}
 
-      - name: (9) Labels — remove needs-more-info on success
-        if: ${{ steps.validate.outputs.problems == '[]' }}
-        uses: ./.github/workflows/manage-labels.yaml
-        with:
-          remove: '["needs-more-info"]'
-
-      - name: (10) Assign author (failure)
-        if: ${{ steps.validate.outputs.problems != '[]' }}
-        uses: ./.github/workflows/manage-assignees.yaml
-        with:
-          action: add
-          assignees: ${{ format('["{0}"]', steps.validate.outputs.author) }}
-
-      - name: (11) Unassign author (success)
-        if: ${{ steps.validate.outputs.problems == '[]' }}
-        uses: ./.github/workflows/manage-assignees.yaml
-        with:
-          action: remove
-          assignees: ${{ format('["{0}"]', steps.validate.outputs.author) }}
-
-      - name: (12) Summary — failed validation
-        if: ${{ steps.validate.outputs.problems != '[]' }}
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const problems = JSON.parse(`${{ steps.validate.outputs.problems }}`);
-            console.log("📋 Step 12 — Writing failure summary");
-            await core.summary
-              .addHeading("❌ Feature Request Validation Failed")
-              .addList(problems)
-              .addQuote("Please update the ticket and rerun the validation.")
-              .write();
-
-      - name: (13) Summary — passed validation
-        if: ${{ steps.validate.outputs.problems == '[]' }}
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const author = `${{ steps.validate.outputs.author }}`;
-            console.log("📋 Step 13 — Writing success summary");
-            await core.summary
-              .addHeading("✅ Feature Request Validation Passed")
-              .addRaw(`@${author}'s ticket meets all section requirements.`)
-              .write();
-
-      - name: (14) Output problems
-        if: always()
-        run: |
-          echo "📤 Step 14 — Exporting problems output"
-          echo "problems=${{ steps.validate.outputs.problems }}" >> "$GITHUB_OUTPUT"
+  # 7) Success branch — unassign author
+  unassign-author-on-success:
+    needs: validate
+    if: ${{ needs.validate.outputs.problems == '[]' }}
+    uses: ./.github/workflows/manage-assignees.yaml
+    with:
+      action: remove
+      assignees: ${{ format('["{0}"]', needs.validate.outputs.author) }}
+    secrets:
+      token: ${{ github.token }}
