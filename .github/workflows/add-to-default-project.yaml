@@ -1,6 +1,6 @@
 name: Add to Default Project
 
-on:
+"on":
   workflow_call:
     inputs:
       project-id:
@@ -17,12 +17,22 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - name: Preflight — echo inputs (sanity log)
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.token }}
+          script: |
+            const projectId = `${{ inputs['project-id'] }}`;
+            const issueNodeId = context.payload?.issue?.node_id;
+            core.info(`🧭 projectId present: ${Boolean(projectId)} (starts with 'PVT_': ${projectId?.startsWith?.('PVT_')})`);
+            core.info(`🧭 issueNodeId present: ${Boolean(issueNodeId)}`);
+
       - name: Add issue to project
         uses: actions/github-script@v7
         with:
           github-token: ${{ secrets.token }}
           script: |
-            const projectId = '${{ inputs.project-id }}';
+            const projectId = `${{ inputs['project-id'] }}`;           // 👈 bracket syntax
             const issueNodeId = context.payload?.issue?.node_id;
 
             let summaryMessage = "";
@@ -44,15 +54,10 @@ jobs:
                     projectId: $projectId,
                     contentId: $contentId
                   }) {
-                    item {
-                      id
-                    }
+                    item { id }
                   }
                 }
-              `, {
-                projectId,
-                contentId: issueNodeId
-              });
+              `, { projectId, contentId: issueNodeId });
 
               const addedId = result?.addProjectV2ItemById?.item?.id;
 

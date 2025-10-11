@@ -1,114 +1,39 @@
 name: Manage Labels
-
-on:
+"on":
   workflow_call:
     inputs:
       add:
-        description: "JSON array of labels to add"
         required: false
-        type: string
+        type: string   # JSON array string, e.g. ["needs-triage"]
+        default: "[]"
       remove:
-        description: "JSON array of labels to remove"
         required: false
         type: string
+        default: "[]"
     secrets:
       token:
         required: true
-        description: GitHub token with `issues` scope
+
+permissions:
+  issues: write
+  contents: read
 
 jobs:
-  manage-labels:
+  labels:
     runs-on: ubuntu-latest
-    permissions:
-      issues: write
     steps:
-      - name: Add/Remove Labels
-        uses: actions/github-script@v7
+      - uses: actions/github-script@v7
         with:
           github-token: ${{ secrets.token }}
           script: |
-            const { owner, repo } = context.repo;
-            const issueNumber = context.issue.number;
-
-            if (!issueNumber) {
-              core.setFailed("🚨 ERROR: No issue or pull request number found in context.");
-              return;
+            const num = (context.payload.issue ?? context.payload.pull_request).number;
+            const add = JSON.parse(`${{ inputs.add }}`);
+            const remove = JSON.parse(`${{ inputs.remove }}`);
+            if (add.length) {
+              await github.rest.issues.addLabels({ owner: context.repo.owner, repo: context.repo.repo, issue_number: num, labels: add });
             }
-
-            const addInput = '${{ inputs.add }}';
-            const removeInput = '${{ inputs.remove }}';
-
-            let toAdd = [];
-            let toRemove = [];
-
-            try {
-              if (addInput) toAdd = JSON.parse(addInput);
-              if (removeInput) toRemove = JSON.parse(removeInput);
-            } catch (err) {
-              core.setFailed(`🚨 ERROR: Failed to parse input JSON arrays. ${err.message}`);
-              return;
+            for (const name of remove) {
+              try {
+                await github.rest.issues.removeLabel({ owner: context.repo.owner, repo: context.repo.repo, issue_number: num, name });
+              } catch { /* ignore if not present */ }
             }
-
-            if (toAdd.length === 0 && toRemove.length === 0) {
-              core.warning("⚠️ WARNING: No labels to add or remove. Skipping.");
-              return;
-            }
-
-            let currentLabels = [];
-            let repoLabels = [];
-
-            try {
-              const resCurrent = await github.rest.issues.listLabelsOnIssue({ owner, repo, issue_number: issueNumber });
-              currentLabels = resCurrent.data.map(label => label.name);
-
-              const resRepo = await github.rest.issues.listLabelsForRepo({ owner, repo });
-              repoLabels = resRepo.data.map(label => label.name);
-            } catch (err) {
-              core.setFailed(`🚨 ERROR: Failed to retrieve labels. ${err.message}`);
-              return;
-            }
-
-            const added = [];
-            const skippedAdd = [];
-            const invalidAdd = [];
-            const removed = [];
-            const skippedRemove = [];
-
-            // Add logic
-            for (const label of toAdd) {
-              if (!repoLabels.includes(label)) {
-                invalidAdd.push(label);
-              } else if (currentLabels.includes(label)) {
-                skippedAdd.push(label);
-              } else {
-                added.push(label);
-              }
-            }
-
-            if (added.length > 0) {
-              await github.rest.issues.addLabels({ owner, repo, issue_number: issueNumber, labels: added });
-            }
-
-            // Remove logic
-            for (const label of toRemove) {
-              if (currentLabels.includes(label)) {
-                await github.rest.issues.removeLabel({ owner, repo, issue_number: issueNumber, name: label });
-                removed.push(label);
-              } else {
-                skippedRemove.push(label);
-              }
-            }
-
-            // Summary
-            await core.summary
-              .addHeading('🏷️ Label Management Summary')
-              .addRaw(`**Added**: ${added.length ? added.join(', ') : 'None'}`)
-              .addBreak()
-              .addRaw(`**Skipped (Already Present)**: ${skippedAdd.length ? skippedAdd.join(', ') : 'None'}`)
-              .addBreak()
-              .addRaw(`**Invalid (Not in Repo)**: ${invalidAdd.length ? invalidAdd.join(', ') : 'None'}`)
-              .addBreak()
-              .addRaw(`**Removed**: ${removed.length ? removed.join(', ') : 'None'}`)
-              .addBreak()
-              .addRaw(`**Skipped (Not Present)**: ${skippedRemove.length ? skippedRemove.join(', ') : 'None'}`)
-              .write();
