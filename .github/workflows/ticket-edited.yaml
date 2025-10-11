@@ -85,7 +85,7 @@ jobs:
       problems: ${{ needs.validate-feature-request-edit.outputs.problems }}
       issue-author: ${{ needs.gate.outputs.author }}
     secrets:
-      token: ${{ secrets.GITHUB_TOKEN }}
+      token: ${{ secrets.PROJECT_PAT  }}
 
   # 4️⃣ Final summary so it’s obvious what happened in this run
   summarize:
