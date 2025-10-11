@@ -79,7 +79,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: (3) Label — add needs-triage (non-feature)
-        uses: ./.github/workflows/manage-labels
+        uses: ./.github/workflows/manage-labels.yaml
         with:
           add: '["needs-triage"]'
       - name: (4) Log
