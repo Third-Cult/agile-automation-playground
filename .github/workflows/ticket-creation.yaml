@@ -76,14 +76,11 @@ jobs:
   label-non-feature:
     needs: [gate, add-to-default-project]
     if: ${{ needs.gate.outputs.is_feature != 'true' }}
-    runs-on: ubuntu-latest
-    steps:
-      - name: (3) Label — add needs-triage (non-feature)
-        uses: ./.github/workflows/manage-labels.yaml
-        with:
-          add: '["needs-triage"]'
-      - name: (4) Log
-        run: echo "🏷️ Non-feature ticket labeled with needs-triage"
+    uses: ./.github/workflows/manage-labels.yaml
+    with:
+      add: '["needs-triage"]'
+    secrets:
+      token: ${{ github.token }}
 
   summarize:
     needs: [gate, add-to-default-project, validate-feature-type, label-non-feature]
