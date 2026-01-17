@@ -1,0 +1,34 @@
+name: Add Labels
+on:
+  workflow_call:
+    inputs:
+      issue_number:
+        description: 'The issue or PR number to label'
+        required: true
+        type: number
+      labels:
+        description: 'Comma-separated list of labels to add'
+        required: true
+        type: string
+
+jobs:
+  add-labels:
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+      pull-requests: write
+    steps:
+      - name: Add labels to issue/PR
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const labels = '${{ inputs.labels }}'.split(',').map(l => l.trim()).filter(l => l);
+            
+            if (labels.length > 0) {
+              await github.rest.issues.addLabels({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: ${{ inputs.issue_number }},
+                labels: labels
+              });
+            }

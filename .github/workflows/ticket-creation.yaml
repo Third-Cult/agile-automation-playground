@@ -1,0 +1,50 @@
+name: Ticket Creation Automation
+on:
+  issues:
+    types: [opened]
+
+jobs:
+  get-issue-info:
+    runs-on: ubuntu-latest
+    outputs:
+      issue_number: ${{ steps.issue.outputs.number }}
+      issue_body: ${{ steps.issue.outputs.body }}
+      labels: ${{ steps.issue.outputs.labels }}
+      is_bug: ${{ steps.issue.outputs.is_bug }}
+    steps:
+      - name: Get issue details
+        id: issue
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const issue = context.payload.issue;
+            const labels = issue.labels.map(l => l.name);
+            
+            core.setOutput('number', issue.number);
+            core.setOutput('body', issue.body || '');
+            core.setOutput('labels', labels.join(','));
+            
+            // Check if type: BUG label exists
+            const isBug = labels.some(l => l === 'type: BUG');
+            core.setOutput('is_bug', isBug);
+
+  add-labels:
+    needs: get-issue-info
+    uses: ./.github/workflows/add-labels.yaml
+    with:
+      issue_number: ${{ needs.get-issue-info.outputs.issue_number }}
+      labels: ${{ needs.get-issue-info.outputs.labels }}
+
+  add-to-project:
+    needs: get-issue-info
+    uses: ./.github/workflows/add-to-default-project.yaml
+    with:
+      issue_number: ${{ needs.get-issue-info.outputs.issue_number }}
+
+  validate-bug:
+    needs: get-issue-info
+    if: needs.get-issue-info.outputs.is_bug == 'true'
+    uses: ./.github/workflows/validate-bug-report.yaml
+    with:
+      issue_number: ${{ needs.get-issue-info.outputs.issue_number }}
+      issue_body: ${{ needs.get-issue-info.outputs.issue_body }}
