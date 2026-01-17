@@ -1,6 +1,7 @@
 name: Bug Report
 description: Report a bug or unexpected behavior
 title: "[<Category>]: "
+type: "Bug"
 labels: ["type: BUG"]
 body:
   - type: markdown
@@ -71,23 +72,13 @@ body:
   - type: textarea
     id: logs
     attributes:
-      label: Logs/Error Messages
-      description: Any relevant console errors, stack traces, or log output
+      label: Supporting Information
+      description: Any relevant console errors, stack traces, log output, screenshots, or videos
       placeholder: |
-        Paste logs or error messages here...
-        Example:
-        ```
-        Error: Cannot read property 'x' of undefined
-            at Component.handleClick (app.js:123)
-        ```
+        Drag supporting information here...
       render: shell
     validations:
       required: false
-
-  - type: markdown
-    attributes:
-      value: |
-        **Screenshots/Videos**: If applicable, please drag and drop screenshots or videos here to help explain the problem.
 
   - type: textarea
     id: additional
