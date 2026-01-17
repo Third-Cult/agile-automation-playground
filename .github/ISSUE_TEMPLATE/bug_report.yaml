@@ -13,7 +13,7 @@ body:
     attributes:
       label: Description
       description: A clear and concise description of what the bug is
-      placeholder: Example: When I click the submit button, nothing happens...
+      placeholder: "Example: When I click the submit button, nothing happens..."
     validations:
       required: true
 
@@ -35,7 +35,7 @@ body:
     attributes:
       label: Expected Behavior
       description: What you expected to happen
-      placeholder: Example: The form should submit and show a success message
+      placeholder: "Example: The form should submit and show a success message"
     validations:
       required: true
 
@@ -44,7 +44,7 @@ body:
     attributes:
       label: Environment
       description: Information about your environment (optional but recommended)
-      placeholder: Example: Windows 11, Chrome 120, Version 1.2.3
+      placeholder: "Example: Windows 11, Chrome 120, Version 1.2.3"
     validations:
       required: false
 
