@@ -1,0 +1,86 @@
+name: Add to Default Project
+on:
+  workflow_call:
+    inputs:
+      issue_number:
+        description: 'The issue number to add to the project'
+        required: true
+        type: number
+
+jobs:
+  add-to-project:
+    runs-on: ubuntu-latest
+    permissions:
+      issues: read
+      content: read
+      project: write
+    steps:
+      - name: Add issue to default project
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const projectNumber = '${{ secrets.PROJECT_NUMBER }}';
+            
+            if (!projectNumber) {
+              console.log('PROJECT_NUMBER secret not configured. Skipping project assignment.');
+              return;
+            }
+            
+            // Get the issue node ID
+            const issueResult = await github.graphql(`
+              query($owner: String!, $repo: String!, $issueNumber: Int!) {
+                repository(owner: $owner, name: $repo) {
+                  issue(number: $issueNumber) {
+                    id
+                  }
+                }
+              }
+            `, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issueNumber: ${{ inputs.issue_number }}
+            });
+            
+            const issueId = issueResult.repository.issue.id;
+            
+            // Get the project node ID
+            const projectResult = await github.graphql(`
+              query($owner: String!, $projectNumber: Int!) {
+                organization(login: $owner) {
+                  projectV2(number: $projectNumber) {
+                    id
+                  }
+                }
+                user(login: $owner) {
+                  projectV2(number: $projectNumber) {
+                    id
+                  }
+                }
+              }
+            `, {
+              owner: context.repo.owner,
+              projectNumber: parseInt(projectNumber)
+            });
+            
+            const projectId = projectResult.organization?.projectV2?.id || projectResult.user?.projectV2?.id;
+            
+            if (!projectId) {
+              throw new Error(`Project #${projectNumber} not found. Make sure the project number is correct and accessible.`);
+            }
+            
+            // Add the issue to the project
+            await github.graphql(`
+              mutation($projectId: ID!, $itemId: ID!) {
+                addProjectV2ItemById(input: {projectId: $projectId, itemId: $itemId}) {
+                  item {
+                    id
+                  }
+                }
+              }
+            `, {
+              projectId: projectId,
+              itemId: issueId
+            });
+            
+            console.log(`Successfully added issue #${{ inputs.issue_number }} to project #${projectNumber}`);
+        continue-on-error: true
