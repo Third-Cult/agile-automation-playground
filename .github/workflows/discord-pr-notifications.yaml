@@ -1,0 +1,137 @@
+name: Discord PR Notifications
+
+on:
+  pull_request:
+    types: [opened]
+
+jobs:
+  handle-pr-opened:
+    if: github.event_name == 'pull_request' && github.event.action == 'opened'
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+      issues: write
+    steps:
+      - name: Handle PR Opened
+        uses: actions/github-script@v7
+        env:
+          DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
+          DISCORD_CHANNEL_ID: ${{ secrets.DISCORD_PR_CHANNEL_ID }}
+          DISCORD_USER_MAPPING: ${{ secrets.DISCORD_USER_MAPPING }}
+          DISCORD_OPERATIONS_ROLE_ID: ${{ secrets.DISCORD_OPERATIONS_ROLE_ID }}
+        with:
+          script: |
+            const pr = context.payload.pull_request;
+            const isDraft = pr.draft;
+            const prNumber = pr.number;
+            const prTitle = pr.title;
+            const prUrl = pr.html_url;
+            const author = pr.user.login;
+            const baseBranch = pr.base.ref;
+            
+            // Get reviewers
+            const reviewers = pr.requested_reviewers || [];
+            const reviewerLogins = reviewers.map(r => r.login);
+            
+            // Load user mapping
+            const userMapping = process.env.DISCORD_USER_MAPPING 
+              ? JSON.parse(process.env.DISCORD_USER_MAPPING) 
+              : {};
+            
+            // Map GitHub usernames to Discord user IDs
+            const mapToDiscord = (githubUsername) => {
+              return userMapping[githubUsername] 
+                ? `<@${userMapping[githubUsername]}>` 
+                : `@${githubUsername}`;
+            };
+            
+            // Build message
+            const draftPrefix = isDraft ? '📝 **DRAFT** ' : '';
+            let message = `${draftPrefix}🔀 **New Pull Request**\n\n`;
+            message += `[PR #${prNumber}: ${prTitle}](${prUrl})\n`;
+            message += `Author: ${mapToDiscord(author)}\n`;
+            
+            if (reviewerLogins.length > 0) {
+              const reviewerMentions = reviewerLogins.map(mapToDiscord).join(' ');
+              message += `Reviewers: ${reviewerMentions}\n`;
+            } else {
+              message += `\n⚠️ No reviewers assigned. Please add reviewers to this PR.\n`;
+            }
+            
+            // Post to Discord
+            const channelId = process.env.DISCORD_CHANNEL_ID;
+            const botToken = process.env.DISCORD_BOT_TOKEN;
+            
+            if (!botToken || !channelId) {
+              core.setFailed('DISCORD_BOT_TOKEN and DISCORD_CHANNEL_ID secrets must be set');
+              return;
+            }
+            
+            // Send message to Discord
+            const messageResponse = await fetch(`https://discord.com/api/v10/channels/${channelId}/messages`, {
+              method: 'POST',
+              headers: {
+                'Authorization': `Bot ${botToken}`,
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({
+                content: message
+              })
+            });
+            
+            if (!messageResponse.ok) {
+              const errorText = await messageResponse.text();
+              core.setFailed(`Failed to send Discord message: ${errorText}`);
+              return;
+            }
+            
+            const messageData = await messageResponse.json();
+            const discordMessageId = messageData.id;
+            
+            // Create thread
+            const threadName = `PR #${prNumber}: ${prTitle}`.substring(0, 100); // Discord thread name limit
+            const threadResponse = await fetch(`https://discord.com/api/v10/channels/${channelId}/messages/${discordMessageId}/threads`, {
+              method: 'POST',
+              headers: {
+                'Authorization': `Bot ${botToken}`,
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({
+                name: threadName,
+                auto_archive_duration: 1440 // 24 hours
+              })
+            });
+            
+            if (!threadResponse.ok) {
+              const errorText = await threadResponse.text();
+              core.warning(`Failed to create thread: ${errorText}`);
+            } else {
+              const threadData = await threadResponse.json();
+              const threadId = threadData.id;
+              
+              // Post thread message
+              await fetch(`https://discord.com/api/v10/channels/${threadId}/messages`, {
+                method: 'POST',
+                headers: {
+                  'Authorization': `Bot ${botToken}`,
+                  'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                  content: '💬 Please keep PR discussions in this thread or in the PR comments on GitHub'
+                })
+              });
+              
+              // Store metadata in PR comment
+              const metadata = {
+                message_id: discordMessageId,
+                thread_id: threadId,
+                channel_id: channelId
+              };
+              
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: prNumber,
+                body: `<!-- DISCORD_BOT_METADATA\n${JSON.stringify(metadata, null, 2)}\n-->`
+              });
+            }
