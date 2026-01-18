@@ -373,6 +373,31 @@ jobs:
                     content: `👋 ${removedReviewerMention} has been removed as a reviewer from this PR.`
                 })
                 });
+
+                // Remove reviewer from thread
+                if (userMapping[removedReviewerLogin]) {
+                    const discordUserId = userMapping[removedReviewerLogin];
+                    try {
+                        const removeResponse = await fetch(`https://discord.com/api/v10/channels/${metadata.thread_id}/thread-members/${discordUserId}`, {
+                        method: 'DELETE',
+                        headers: {
+                            'Authorization': `Bot ${botToken}`
+                        }
+                        });
+                        
+                        if (removeResponse.ok) {
+                        core.info(`Removed ${removedReviewerLogin} from Discord thread`);
+                        } else if (removeResponse.status === 404) {
+                        // User not in thread - that's okay
+                        core.info(`${removedReviewerLogin} was not in the thread`);
+                        } else {
+                        const errorText = await removeResponse.text();
+                        core.warning(`Failed to remove ${removedReviewerLogin} from thread: ${errorText}`);
+                        }
+                    } catch (e) {
+                        core.warning(`Error removing ${removedReviewerLogin} from thread: ${e.message}`);
+                    }
+                }
             }
 
             // Update parent message with ALL current reviewers (after removal)
