@@ -496,7 +496,25 @@ jobs:
                 const author = pr.user.login;
                 const reviewer = review.user.login;
                 const reviewState = review.state; // 'approved', 'changes_requested', or 'commented'
-                const reviewBody = review.body || '';
+                
+                // Get the review body - try from payload first, then fetch from API if needed
+                let reviewBody = review.body || '';
+
+                // If review body is empty, try fetching the full review details
+                if (!reviewBody || reviewBody.trim() === '') {
+                try {
+                    const fullReview = await github.rest.pulls.getReview({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    pull_number: prNumber,
+                    review_id: review.id
+                    });
+                    reviewBody = fullReview.data.body || '';
+                } catch (e) {
+                    core.warning(`Could not fetch review details: ${e.message}`);
+                    reviewBody = '';
+                }
+                }
                 
                 // Skip if it's just a comment (not approval or changes requested)
                 if (reviewState === 'commented') {
@@ -573,21 +591,15 @@ jobs:
                 const authorMention = mapToDiscord(author);
                 let reviewMessage = `${emoji} **${statusText} BY** ${reviewerMention}\n\n`;
                 
-                if (reviewBody) {
-                    reviewMessage += `> ${reviewBody.replace(/\n/g, '\n> ')}\n\n`;
-                }
-                
-                // Add merge instructions for approvals
-                if (reviewState === 'approved') {
-                    if (baseBranch === 'dev') {
-                    reviewMessage += `${authorMention} Ready to merge! 🚀`;
-                    } else {
-                    const operationsRoleId = process.env.DISCORD_OPERATIONS_ROLE_ID;
-                    const operationsMention = operationsRoleId ? `<@&${operationsRoleId}>` : '@Operations';
-                    reviewMessage += `${authorMention} ${operationsMention} Ready to merge! 🚀`;
-                    }
-                } else if (reviewState === 'changes_requested') {
-                    reviewMessage += `${authorMention} Please address the requested changes.`;
+                if (reviewBody && reviewBody.trim() !== '') {
+                  reviewMessage += `> ${reviewBody.replace(/\n/g, '\n> ')}\n\n`;
+                } else {
+                  // If no review body, still add a note
+                  if (reviewState === 'approved') {
+                    reviewMessage += `> Approved without comment\n\n`;
+                  } else if (reviewState === 'changes_requested') {
+                    reviewMessage += `> Changes requested\n\n`;
+                  }
                 }
                 
                 // Post in thread
