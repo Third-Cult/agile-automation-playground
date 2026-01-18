@@ -717,84 +717,85 @@ jobs:
                 } catch (e) {
                     core.warning(`Failed to edit parent message: ${e.message}`);
                 }
-                handle-review-dismissed:
-                    if: github.event_name == 'pull_request_review' && github.event.action == 'dismissed'
-                    runs-on: ubuntu-latest
-                    permissions:
-                      pull-requests: read
-                      issues: read
-                    steps:
-                      - name: Handle Review Dismissed
-                        uses: actions/github-script@v7
-                        env:
-                          DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
-                          DISCORD_USER_MAPPING: ${{ secrets.DISCORD_USER_MAPPING }}
-                        with:
-                          script: |
-                            const pr = context.payload.pull_request;
-                            const review = context.payload.review;
-                            const prNumber = pr.number;
-                            const reviewer = review.user.login;
-                            const reviewState = review.state; // The original state before dismissal
-                            
-                            // Only notify if it was a changes_requested review
-                            if (reviewState !== 'changes_requested') {
-                              core.info('Dismissed review was not changes_requested, skipping.');
-                              return;
-                            }
-                            
-                            // Get bot token
-                            const botToken = process.env.DISCORD_BOT_TOKEN;
-                            if (!botToken) {
-                              core.setFailed('DISCORD_BOT_TOKEN secret must be set');
-                              return;
-                            }
-                            
-                            // Load user mapping
-                            const userMapping = process.env.DISCORD_USER_MAPPING 
-                              ? JSON.parse(process.env.DISCORD_USER_MAPPING) 
-                              : {};
-                            
-                            const mapToDiscord = (githubUsername) => {
-                              return userMapping[githubUsername] 
-                                ? `<@${userMapping[githubUsername]}>` 
-                                : `@${githubUsername}`;
-                            };
-                            
-                            // Find metadata comment
-                            const comments = await github.rest.issues.listComments({
-                              owner: context.repo.owner,
-                              repo: context.repo.repo,
-                              issue_number: prNumber
-                            });
-                            
-                            let metadata = null;
-                            for (const comment of comments.data) {
-                              const match = comment.body.match(/<!-- DISCORD_BOT_METADATA\n([\s\S]*?)\n-->/);
-                              if (match) {
-                                try {
-                                  metadata = JSON.parse(match[1]);
-                                  break;
-                                } catch (e) {
-                                  core.warning(`Failed to parse metadata: ${e.message}`);
-                                }
-                              }
-                            }
-                            
-                            if (!metadata || !metadata.thread_id) {
-                              core.warning('No Discord thread found for this PR. Skipping.');
-                              return;
-                            }
-                            
-                            // Post in thread to notify the reviewer
-                            const reviewerMention = mapToDiscord(reviewer);
-                            await fetch(`https://discord.com/api/v10/channels/${metadata.thread_id}/messages`, {
-                              method: 'POST',
-                              headers: {
-                                'Authorization': `Bot ${botToken}`,
-                                'Content-Type': 'application/json',
-                              },
-                              body: JSON.stringify({
-                                content: `✅ ${reviewerMention} The requested changes have been addressed. Please review the updates.`
-                              })
-                            });
+
+  handle-review-dismissed:
+    if: github.event_name == 'pull_request_review' && github.event.action == 'dismissed'
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: read
+      issues: read
+    steps:
+      - name: Handle Review Dismissed
+        uses: actions/github-script@v7
+        env:
+          DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
+          DISCORD_USER_MAPPING: ${{ secrets.DISCORD_USER_MAPPING }}
+        with:
+            script: |
+                const pr = context.payload.pull_request;
+                const review = context.payload.review;
+                const prNumber = pr.number;
+                const reviewer = review.user.login;
+                const reviewState = review.state; // The original state before dismissal
+                
+                // Only notify if it was a changes_requested review
+                if (reviewState !== 'changes_requested') {
+                    core.info('Dismissed review was not changes_requested, skipping.');
+                    return;
+                }
+                
+                // Get bot token
+                const botToken = process.env.DISCORD_BOT_TOKEN;
+                if (!botToken) {
+                    core.setFailed('DISCORD_BOT_TOKEN secret must be set');
+                    return;
+                }
+                
+                // Load user mapping
+                const userMapping = process.env.DISCORD_USER_MAPPING 
+                    ? JSON.parse(process.env.DISCORD_USER_MAPPING) 
+                    : {};
+                
+                const mapToDiscord = (githubUsername) => {
+                    return userMapping[githubUsername] 
+                    ? `<@${userMapping[githubUsername]}>` 
+                    : `@${githubUsername}`;
+                };
+                
+                // Find metadata comment
+                const comments = await github.rest.issues.listComments({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    issue_number: prNumber
+                });
+                
+                let metadata = null;
+                for (const comment of comments.data) {
+                    const match = comment.body.match(/<!-- DISCORD_BOT_METADATA\n([\s\S]*?)\n-->/);
+                    if (match) {
+                    try {
+                        metadata = JSON.parse(match[1]);
+                        break;
+                    } catch (e) {
+                        core.warning(`Failed to parse metadata: ${e.message}`);
+                    }
+                    }
+                }
+                
+                if (!metadata || !metadata.thread_id) {
+                    core.warning('No Discord thread found for this PR. Skipping.');
+                    return;
+                }
+                
+                // Post in thread to notify the reviewer
+                const reviewerMention = mapToDiscord(reviewer);
+                await fetch(`https://discord.com/api/v10/channels/${metadata.thread_id}/messages`, {
+                    method: 'POST',
+                    headers: {
+                    'Authorization': `Bot ${botToken}`,
+                    'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                    content: `✅ ${reviewerMention} The requested changes have been addressed. Please review the updates.`
+                    })
+                });
