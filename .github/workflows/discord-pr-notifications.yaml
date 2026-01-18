@@ -151,6 +151,13 @@ jobs:
           DISCORD_USER_MAPPING: ${{ secrets.DISCORD_USER_MAPPING }}
         with:
           script: |
+            const pr = context.payload.pull_request;
+            const prNumber = pr.number;
+            
+            // Get ALL current reviewers from PR (not just the one that triggered the event)
+            const allReviewers = pr.requested_reviewers || [];
+            const allReviewerLogins = allReviewers.map(r => r.login);
+
             // Get ALL current reviewers from PR (not just the one that triggered the event)
             const allReviewers = pr.requested_reviewers || [];
             const allReviewerLogins = allReviewers.map(r => r.login);
