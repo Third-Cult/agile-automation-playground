@@ -321,7 +321,8 @@ jobs:
 
             // Get bot token
             const botToken = process.env.DISCORD_BOT_TOKEN;
-            if (!botToken) {
+            if (!botToken) 
+            {
                 core.setFailed('DISCORD_BOT_TOKEN secret must be set');
                 return;
             }
@@ -331,126 +332,159 @@ jobs:
                 ? JSON.parse(process.env.DISCORD_USER_MAPPING) 
                 : {};
 
-            const mapToDiscord = (githubUsername) => {
+            const mapToDiscord = (githubUsername) => 
+            {
                 return userMapping[githubUsername] 
                 ? `<@${userMapping[githubUsername]}>` 
                 : `@${githubUsername}`;
             };
 
             // Find metadata comment
-            const comments = await github.rest.issues.listComments({
+            const comments = await github.rest.issues.listComments(
+              {
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 issue_number: prNumber
-            });
+              }
+                );
 
             let metadata = null;
-            for (const comment of comments.data) {
+            for (const comment of comments.data) 
+            {
                 const match = comment.body.match(/<!-- DISCORD_BOT_METADATA\n([\s\S]*?)\n-->/);
-                if (match) {
-                try {
+                if (match) 
+                {
+                  try {
                     metadata = JSON.parse(match[1]);
                     break;
-                } catch (e) {
+                  } catch (e) 
+                  {
                     core.warning(`Failed to parse metadata: ${e.message}`);
-                }
+                  }
                 }
             }
 
-            if (!metadata || !metadata.thread_id) {
+            if (!metadata || !metadata.thread_id) 
+            {
                 core.warning('No Discord thread found for this PR. Skipping.');
                 return;
             }
 
             // Post in thread for the removed reviewer
-            if (removedReviewerLogin) {
+            if (removedReviewerLogin) 
+            {
                 const removedReviewerMention = mapToDiscord(removedReviewerLogin);
-                await fetch(`https://discord.com/api/v10/channels/${metadata.thread_id}/messages`, {
-                method: 'POST',
-                headers: {
-                    'Authorization': `Bot ${botToken}`,
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                    content: `👋 ${removedReviewerMention} has been removed as a reviewer from this PR.`
-                })
-                });
+                await fetch(`https://discord.com/api/v10/channels/${metadata.thread_id}/messages`, 
+                    {
+                      method: 'POST',
+                      headers: 
+                      {
+                        'Authorization': `Bot ${botToken}`,
+                        'Content-Type': 'application/json',
+                      },
+                      body: JSON.stringify(
+                        {
+                            content: `👋 ${removedReviewerMention} has been removed as a reviewer from this PR.`
+                        }
+                      )
+                    });
 
                 // Remove reviewer from thread
-                if (userMapping[removedReviewerLogin]) {
+                if (userMapping[removedReviewerLogin]) 
+                {
                     const discordUserId = userMapping[removedReviewerLogin];
-                    try {
-                        const removeResponse = await fetch(`https://discord.com/api/v10/channels/${metadata.thread_id}/thread-members/${discordUserId}`, {
-                        method: 'DELETE',
-                        headers: {
-                            'Authorization': `Bot ${botToken}`
-                        }
+                    try 
+                    {
+                        const removeResponse = await fetch(`https://discord.com/api/v10/channels/${metadata.thread_id}/thread-members/${discordUserId}`, 
+                        {
+                          method: 'DELETE',
+                          headers: 
+                            {
+                                'Authorization': `Bot ${botToken}`
+                            }
                         });
                         
-                        if (removeResponse.ok) {
-                        core.info(`Removed ${removedReviewerLogin} from Discord thread`);
-                        } else if (removeResponse.status === 404) {
-                        // User not in thread - that's okay
-                        core.info(`${removedReviewerLogin} was not in the thread`);
-                        } else {
-                        const errorText = await removeResponse.text();
-                        core.warning(`Failed to remove ${removedReviewerLogin} from thread: ${errorText}`);
+                        if (removeResponse.ok) 
+                        {
+                          core.info(`Removed ${removedReviewerLogin} from Discord thread`);
+                        } else if (removeResponse.status === 404) 
+                        {
+                          // User not in thread - that's okay
+                          core.info(`${removedReviewerLogin} was not in the thread`);
+                        } else 
+                        {
+                          const errorText = await removeResponse.text();
+                          core.warning(`Failed to remove ${removedReviewerLogin} from thread: ${errorText}`);
                         }
-                    } catch (e) {
+                    } catch (e) 
+                    {
                         core.warning(`Error removing ${removedReviewerLogin} from thread: ${e.message}`);
                     }
                 }
             }
 
             // Update parent message with ALL current reviewers (after removal)
-            try {
-                const messageResponse = await fetch(`https://discord.com/api/v10/channels/${metadata.channel_id}/messages/${metadata.message_id}`, {
-                method: 'GET',
-                headers: {
+            try 
+            {
+                const messageResponse = await fetch(`https://discord.com/api/v10/channels/${metadata.channel_id}/messages/${metadata.message_id}`, 
+                {
+                  method: 'GET',
+                  headers: 
+                  {
                     'Authorization': `Bot ${botToken}`
-                }
+                  }
                 });
                 
-                if (messageResponse.ok) {
-                const messageData = await messageResponse.json();
-                let content = messageData.content;
-                
-                // Extract the parts before and after the reviewers section
-                const lines = content.split('\n');
-                let beforeReviewers = [];
-                let afterReviewers = [];
-                let reviewersLineIndex = -1;
-                
-                // Find the reviewers line or no reviewers warning
-                for (let i = 0; i < lines.length; i++) {
-                    if (lines[i].includes('Reviewers:') || lines[i].includes('⚠️ No reviewers assigned')) {
-                    reviewersLineIndex = i;
-                    break;
+                if (messageResponse.ok) 
+                {
+                    const messageData = await messageResponse.json();
+                    let content = messageData.content;
+                    
+                    // Extract the parts before and after the reviewers section
+                    const lines = content.split('\n');
+                    let beforeReviewers = [];
+                    let afterReviewers = [];
+                    let reviewersLineIndex = -1;
+                    
+                    // Find the reviewers line or no reviewers warning
+                    for (let i = 0; i < lines.length; i++) 
+                    {
+                        if (lines[i].includes('Reviewers:') || lines[i].includes('⚠️ No reviewers assigned')) 
+                        {
+                          reviewersLineIndex = i;
+                          break;
+                        }
                     }
                 }
                 
-                if (reviewersLineIndex >= 0) {
+                if (reviewersLineIndex >= 0) 
+                {
                     beforeReviewers = lines.slice(0, reviewersLineIndex);
                     afterReviewers = lines.slice(reviewersLineIndex + 1);
-                } else {
+                } else 
+                {
                     // If no reviewers line found, assume it should be after the Author line
                     const authorLineIndex = lines.findIndex(line => line.startsWith('Author:'));
-                    if (authorLineIndex >= 0) {
-                    beforeReviewers = lines.slice(0, authorLineIndex + 1);
-                    afterReviewers = lines.slice(authorLineIndex + 1);
-                    } else {
-                    beforeReviewers = lines;
-                    afterReviewers = [];
+                    if (authorLineIndex >= 0) 
+                    {
+                        beforeReviewers = lines.slice(0, authorLineIndex + 1);
+                        afterReviewers = lines.slice(authorLineIndex + 1);
+                    } else 
+                    {
+                        beforeReviewers = lines;
+                        afterReviewers = [];
                     }
                 }
                 
                 // Rebuild the message with current reviewers
                 const rebuiltLines = [...beforeReviewers];
                 
-                if (allReviewerLogins.length > 0) {
+                if (allReviewerLogins.length > 0) 
+                {
                     const reviewerMentions = allReviewerLogins.map(mapToDiscord).join(' ');
                     rebuiltLines.push(`Reviewers: ${reviewerMentions}`);
-                } else {
+                } else 
+                 {
                     rebuiltLines.push(`\n⚠️ No reviewers assigned. Please add reviewers to this PR.`);
                 }
                 
@@ -458,21 +492,24 @@ jobs:
                 content = rebuiltLines.join('\n');
                 
                 // Edit the message
-                await fetch(`https://discord.com/api/v10/channels/${metadata.channel_id}/messages/${metadata.message_id}`, {
+                await fetch(`https://discord.com/api/v10/channels/${metadata.channel_id}/messages/${metadata.message_id}`, 
+                {
                     method: 'PATCH',
-                    headers: {
-                    'Authorization': `Bot ${botToken}`,
-                    'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({
-                    content: content,
-                    flags: 4 // Suppress embeds
+                    headers: 
+                      {
+                        'Authorization': `Bot ${botToken}`,
+                        'Content-Type': 'application/json',
+                      },
+                    body: JSON.stringify(
+                    {
+                        content: content,
+                        flags: 4 // Suppress embeds
                     })
                 });
-                }
-            } catch (e) {
+            } catch (e) 
+            {
                 core.warning(`Failed to edit parent message: ${e.message}`);
-            }   
+            } 
                 
   handle-pr-review:
     if: github.event_name == 'pull_request_review'
