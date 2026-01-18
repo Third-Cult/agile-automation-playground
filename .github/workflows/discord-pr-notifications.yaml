@@ -2,7 +2,7 @@ name: Discord PR Notifications
 
 on:
   pull_request:
-    types: [opened]
+    types: [opened, review_requested]
 
 jobs:
   handle-pr-opened:
@@ -75,7 +75,8 @@ jobs:
                 'Content-Type': 'application/json',
               },
               body: JSON.stringify({
-                content: message
+                content: message,
+                flags: 4 // Suppress embeds
               })
             });
             
@@ -134,4 +135,156 @@ jobs:
                 issue_number: prNumber,
                 body: `<!-- DISCORD_BOT_METADATA\n${JSON.stringify(metadata, null, 2)}\n-->`
               });
+            }
+
+  handle-reviewer-added:
+    if: github.event_name == 'pull_request' && github.event.action == 'review_requested'
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: read
+      issues: read
+    steps:
+      - name: Handle Reviewer Added
+        uses: actions/github-script@v7
+        env:
+          DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
+          DISCORD_USER_MAPPING: ${{ secrets.DISCORD_USER_MAPPING }}
+        with:
+          script: |
+            // Get ALL current reviewers from PR (not just the one that triggered the event)
+            const allReviewers = pr.requested_reviewers || [];
+            const allReviewerLogins = allReviewers.map(r => r.login);
+
+            // Get the specific reviewer that triggered this event (for thread notification)
+            const requestedReviewer = context.payload.requested_reviewer;
+            const reviewerLogin = requestedReviewer ? requestedReviewer.login : null;
+
+            // Get bot token
+            const botToken = process.env.DISCORD_BOT_TOKEN;
+            if (!botToken) {
+            core.setFailed('DISCORD_BOT_TOKEN secret must be set');
+            return;
+            }
+
+            // Load user mapping
+            const userMapping = process.env.DISCORD_USER_MAPPING 
+            ? JSON.parse(process.env.DISCORD_USER_MAPPING) 
+            : {};
+
+            const mapToDiscord = (githubUsername) => {
+            return userMapping[githubUsername] 
+                ? `<@${userMapping[githubUsername]}>` 
+                : `@${githubUsername}`;
+            };
+
+            // Find metadata comment
+            const comments = await github.rest.issues.listComments({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            issue_number: prNumber
+            });
+
+            let metadata = null;
+            for (const comment of comments.data) {
+            const match = comment.body.match(/<!-- DISCORD_BOT_METADATA\n([\s\S]*?)\n-->/);
+            if (match) {
+                try {
+                metadata = JSON.parse(match[1]);
+                break;
+                } catch (e) {
+                core.warning(`Failed to parse metadata: ${e.message}`);
+                }
+            }
+            }
+
+            if (!metadata || !metadata.thread_id) {
+            core.warning('No Discord thread found for this PR. Skipping.');
+            return;
+            }
+
+            // Post in thread for the newly added reviewer(s)
+            if (reviewerLogin) {
+            const reviewerMention = mapToDiscord(reviewerLogin);
+            await fetch(`https://discord.com/api/v10/channels/${metadata.thread_id}/messages`, {
+                method: 'POST',
+                headers: {
+                'Authorization': `Bot ${botToken}`,
+                'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                content: `${reviewerMention} You've been added as a reviewer to this PR!`
+                })
+            });
+            }
+
+            // Update parent message with ALL current reviewers (handles multiple additions)
+            try {
+            const messageResponse = await fetch(`https://discord.com/api/v10/channels/${metadata.channel_id}/messages/${metadata.message_id}`, {
+                method: 'GET',
+                headers: {
+                'Authorization': `Bot ${botToken}`
+                }
+            });
+            
+            if (messageResponse.ok) {
+                const messageData = await messageResponse.json();
+                let content = messageData.content;
+                
+                // Extract the parts before and after the reviewers section
+                const lines = content.split('\n');
+                let beforeReviewers = [];
+                let afterReviewers = [];
+                let reviewersLineIndex = -1;
+                
+                // Find the reviewers line or no reviewers warning
+                for (let i = 0; i < lines.length; i++) {
+                if (lines[i].includes('Reviewers:') || lines[i].includes('⚠️ No reviewers assigned')) {
+                    reviewersLineIndex = i;
+                    break;
+                }
+                }
+                
+                if (reviewersLineIndex >= 0) {
+                beforeReviewers = lines.slice(0, reviewersLineIndex);
+                afterReviewers = lines.slice(reviewersLineIndex + 1);
+                } else {
+                // If no reviewers line found, assume it should be after the Author line
+                const authorLineIndex = lines.findIndex(line => line.startsWith('Author:'));
+                if (authorLineIndex >= 0) {
+                    beforeReviewers = lines.slice(0, authorLineIndex + 1);
+                    afterReviewers = lines.slice(authorLineIndex + 1);
+                } else {
+                    beforeReviewers = lines;
+                    afterReviewers = [];
+                }
+                }
+                
+                // Rebuild the message with current reviewers
+                const rebuiltLines = [...beforeReviewers];
+                
+                if (allReviewerLogins.length > 0) {
+                const reviewerMentions = allReviewerLogins.map(mapToDiscord).join(' ');
+                rebuiltLines.push(`Reviewers: ${reviewerMentions}`);
+                } else {
+                rebuiltLines.push(`\n⚠️ No reviewers assigned. Please add reviewers to this PR.`);
+                }
+                
+                rebuiltLines.push(...afterReviewers);
+                content = rebuiltLines.join('\n');
+                
+                // Edit the message
+                await fetch(`https://discord.com/api/v10/channels/${metadata.channel_id}/messages/${metadata.message_id}`, {
+                method: 'PATCH',
+                headers: {
+                    'Authorization': `Bot ${botToken}`,
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    content: content,
+                    flags: 4 // Suppress embeds
+                })
+                });
+            }
+            } catch (e) {
+            core.warning(`Failed to edit parent message: ${e.message}`);
             }
