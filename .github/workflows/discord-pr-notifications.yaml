@@ -2,7 +2,7 @@ name: Discord PR Notifications
 
 on:
   pull_request:
-    types: [opened, review_requested, review_request_removed, synchronize]
+    types: [opened, review_requested, review_request_removed, synchronize, closed]
   pull_request_review:
     types: [submitted, dismissed]
 
@@ -52,13 +52,17 @@ jobs:
             let message = `${draftPrefix}🔀 **New Pull Request**\n\n`;
             message += `[PR #${prNumber}: ${prTitle}](${prUrl})\n`;
             message += `Author: ${mapToDiscord(author)}\n`;
-            
-            if (reviewerLogins.length > 0) {
-              const reviewerMentions = reviewerLogins.map(mapToDiscord).join(' ');
-              message += `Reviewers: ${reviewerMentions}\n`;
-            } else {
-              message += `\n⚠️ No reviewers assigned. Please add reviewers to this PR.\n`;
+
+            if (reviewerLogins.length > 0) 
+            {
+                const reviewerMentions = reviewerLogins.map(mapToDiscord).join(' ');
+                message += `Reviewers: ${reviewerMentions}\n`;
+            } else 
+            {
+                message += `\n⚠️ No reviewers assigned. Please add reviewers to this PR.\n`;
             }
+
+            message += `\nStatus: In Review\n`;
             
             // Post to Discord
             const channelId = process.env.DISCORD_CHANNEL_ID;
@@ -139,7 +143,6 @@ jobs:
               });
             }
 
-## REVIEWER ACTIONS ##
   handle-reviewer-added:
     if: github.event_name == 'pull_request' && github.event.action == 'review_requested'
     runs-on: ubuntu-latest
@@ -634,7 +637,7 @@ jobs:
                 
                 // Debug: log review body
                 core.info(`Review body from payload: ${review.body || '(empty)'}`);
-                core.info(`Review body after fetch: ${reviewBody || '(empty)'}`)
+                core.info(`Review body after fetch: ${reviewBody || '(empty)'}`);
 
                 if (reviewBody && reviewBody.trim() !== '') {
                   reviewMessage += `> ${reviewBody.replace(/\n/g, '\n> ')}\n\n`;
@@ -691,14 +694,25 @@ jobs:
                     const lines = content.split('\n');
                     let newLines = [];
                     let statusLineAdded = false;
-                    
+
+                    // Process lines and update status
                     for (let i = 0; i < lines.length; i++) {
-                        const line = lines[i];
-                        
+                    const line = lines[i];
+                    
+                    // Update status line if found
+                    if (line.startsWith('Status:')) {
+                        if (reviewState === 'approved') {
+                        newLines.push('Status: Approved');
+                        } else if (reviewState === 'changes_requested') {
+                        newLines.push('Status: Needs Changes');
+                        } else {
+                        newLines.push(line); // Keep original if unknown state
+                        }
+                        statusLineAdded = true;
+                    } else {
                         // Replace existing review status if found
                         if (line.includes('✅ APPROVED') || line.includes('❌ CHANGES REQUESTED')) {
                         newLines.push(`${emoji} **${statusText}** by ${reviewerMention}`);
-                        statusLineAdded = true;
                         } else if (!statusLineAdded && (line.includes('Reviewers:') || line.includes('⚠️ No reviewers assigned'))) {
                         // Add status after reviewers line
                         newLines.push(line);
@@ -708,18 +722,18 @@ jobs:
                         newLines.push(line);
                         }
                     }
-                    
-                    // If no status line was found/added, add it at the end before any existing content
-                    if (!statusLineAdded) {
-                        // Find a good place to insert (after reviewers or author)
-                        const reviewersIndex = newLines.findIndex(line => line.includes('Reviewers:') || line.includes('⚠️ No reviewers assigned'));
-                        if (reviewersIndex >= 0) {
-                        newLines.splice(reviewersIndex + 1, 0, `${emoji} **${statusText}** by ${reviewerMention}`);
-                        } else {
-                        newLines.push(`${emoji} **${statusText}** by ${reviewerMention}`);
-                        }
                     }
-                    
+
+                    // If no status line was found, add it
+                    if (!statusLineAdded) {
+                    const reviewersIndex = newLines.findIndex(line => line.includes('Reviewers:') || line.includes('⚠️ No reviewers assigned'));
+                    if (reviewersIndex >= 0) {
+                        newLines.splice(reviewersIndex + 1, 0, reviewState === 'approved' ? 'Status: Approved' : 'Status: Needs Changes');
+                    } else {
+                        newLines.push(reviewState === 'approved' ? 'Status: Approved' : 'Status: Needs Changes');
+                    }
+                    }
+
                     content = newLines.join('\n');
                     
                     // Edit the message
@@ -820,3 +834,291 @@ jobs:
                     content: `✅ ${reviewerMention} The requested changes have been addressed. Please review the updates.`
                     })
                 });
+                
+  handle-pr-closed:
+      if: github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged == false
+      runs-on: ubuntu-latest
+      permissions:
+            pull-requests: read
+            issues: read
+      steps:
+      - name: Handle PR Closed
+        uses: actions/github-script@v7
+        env:
+            DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
+            DISCORD_USER_MAPPING: ${{ secrets.DISCORD_USER_MAPPING }}
+        with:
+            script: |
+                    const pr = context.payload.pull_request;
+                    const prNumber = pr.number;
+                    const closer = pr.user.login; // The person who closed it
+                    // Try to get the closing comment from the PR
+                    let closeComment = '';
+                    try {
+                    const issueComments = await github.rest.issues.listComments({
+                        owner: context.repo.owner,
+                        repo: context.repo.repo,
+                        issue_number: prNumber
+                    });
+                    // Get the most recent comment that might be the closing comment
+                    // Note: GitHub doesn't always provide a specific "closing comment"
+                    // This is a best-effort approach
+                    if (issueComments.data.length > 0) {
+                        const lastComment = issueComments.data[issueComments.data.length - 1];
+                        // Only use if it's recent (within last minute) and from the closer
+                        const commentTime = new Date(lastComment.created_at);
+                        const now = new Date();
+                        if ((now - commentTime) < 60000 && lastComment.user.login === closer) {
+                        closeComment = lastComment.body || '';
+                        }
+                    }
+                    } catch (e) {
+                    core.warning(`Could not fetch closing comment: ${e.message}`);
+                    }
+                    
+                    // Get bot token
+                    const botToken = process.env.DISCORD_BOT_TOKEN;
+                    if (!botToken) {
+                        core.setFailed('DISCORD_BOT_TOKEN secret must be set');
+                        return;
+                    }
+                    
+                    // Load user mapping
+                    const userMapping = process.env.DISCORD_USER_MAPPING 
+                        ? JSON.parse(process.env.DISCORD_USER_MAPPING) 
+                        : {};
+                    
+                    const mapToDiscord = (githubUsername) => {
+                        return userMapping[githubUsername] 
+                        ? `<@${userMapping[githubUsername]}>` 
+                        : `@${githubUsername}`;
+                    };
+                    
+                    // Find metadata comment
+                    const comments = await github.rest.issues.listComments({
+                        owner: context.repo.owner,
+                        repo: context.repo.repo,
+                        issue_number: prNumber
+                    });
+                    
+                    let metadata = null;
+                    for (const comment of comments.data) {
+                        const match = comment.body.match(/<!-- DISCORD_BOT_METADATA\n([\s\S]*?)\n-->/);
+                        if (match) {
+                        try {
+                            metadata = JSON.parse(match[1]);
+                            break;
+                        } catch (e) {
+                            core.warning(`Failed to parse metadata: ${e.message}`);
+                        }
+                        }
+                    }
+                    
+                    if (!metadata || !metadata.thread_id) {
+                        core.warning('No Discord thread found for this PR. Skipping.');
+                        return;
+                    }
+                    
+                    // Post in thread
+                    const closerMention = mapToDiscord(closer);
+                    let closeMessage = `🚫 **CLOSED BY** ${closerMention}\n\n`;
+                    
+                    if (closeComment && closeComment.trim() !== '') {
+                        closeMessage += `> ${closeComment.replace(/\n/g, '\n> ')}\n`;
+                    }
+                    
+                    await fetch(`https://discord.com/api/v10/channels/${metadata.thread_id}/messages`, {
+                        method: 'POST',
+                        headers: {
+                        'Authorization': `Bot ${botToken}`,
+                        'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({
+                        content: closeMessage
+                        })
+                    });
+                    
+                    // Update parent message status
+                    try {
+                        const messageResponse = await fetch(`https://discord.com/api/v10/channels/${metadata.channel_id}/messages/${metadata.message_id}`, {
+                        method: 'GET',
+                        headers: {
+                            'Authorization': `Bot ${botToken}`
+                        }
+                        });
+                        
+                        if (messageResponse.ok) {
+                        const messageData = await messageResponse.json();
+                        let content = messageData.content;
+                        
+                        // Update status
+                        content = content.replace(/Status: .*/g, 'Status: Closed');
+                        
+                        // Edit the message
+                        await fetch(`https://discord.com/api/v10/channels/${metadata.channel_id}/messages/${metadata.message_id}`, {
+                            method: 'PATCH',
+                            headers: {
+                            'Authorization': `Bot ${botToken}`,
+                            'Content-Type': 'application/json',
+                            },
+                            body: JSON.stringify({
+                            content: content,
+                            flags: 4 // Suppress embeds
+                            })
+                        });
+                        }
+                    } catch (e) {
+                        core.warning(`Failed to edit parent message: ${e.message}`);
+                    }
+  handle-pr-merged:
+      if: github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged == true
+      runs-on: ubuntu-latest
+      permissions:
+            pull-requests: read
+            issues: read
+            contents: read
+      steps:
+          - name: Handle PR Merged
+            uses: actions/github-script@v7
+            env:
+                DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
+                DISCORD_USER_MAPPING: ${{ secrets.DISCORD_USER_MAPPING }}
+            with:
+              script: |
+                const pr = context.payload.pull_request;
+                const prNumber = pr.number;
+                const merger = pr.merged_by ? pr.merged_by.login : 'unknown';
+                const mergeCommitSha = pr.merge_commit_sha;
+                
+                // Get bot token
+                const botToken = process.env.DISCORD_BOT_TOKEN;
+                if (!botToken) {
+                    core.setFailed('DISCORD_BOT_TOKEN secret must be set');
+                    return;
+                }
+                
+                // Load user mapping
+                const userMapping = process.env.DISCORD_USER_MAPPING 
+                    ? JSON.parse(process.env.DISCORD_USER_MAPPING) 
+                    : {};
+                
+                const mapToDiscord = (githubUsername) => {
+                    return userMapping[githubUsername] 
+                    ? `<@${userMapping[githubUsername]}>` 
+                    : `@${githubUsername}`;
+                };
+                
+                // Get merge commit message
+                let mergeMessage = '';
+                if (mergeCommitSha) {
+                    try {
+                    const commit = await github.rest.repos.getCommit({
+                        owner: context.repo.owner,
+                        repo: context.repo.repo,
+                        ref: mergeCommitSha
+                    });
+                    mergeMessage = commit.data.commit.message.split('\n')[0];
+                    } catch (e) {
+                    core.warning(`Could not fetch merge commit: ${e.message}`);
+                    }
+                }
+                
+                // Find metadata comment
+                const comments = await github.rest.issues.listComments({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    issue_number: prNumber
+                });
+                
+                let metadata = null;
+                for (const comment of comments.data) {
+                    const match = comment.body.match(/<!-- DISCORD_BOT_METADATA\n([\s\S]*?)\n-->/);
+                    if (match) {
+                    try {
+                        metadata = JSON.parse(match[1]);
+                        break;
+                    } catch (e) {
+                        core.warning(`Failed to parse metadata: ${e.message}`);
+                    }
+                    }
+                }
+                
+                if (!metadata) {
+                    core.warning('No Discord metadata found for this PR. Skipping.');
+                    return;
+                }
+                
+                // Add celebration emoji reaction
+                await fetch(`https://discord.com/api/v10/channels/${metadata.channel_id}/messages/${metadata.message_id}/reactions/🎉/@me`, {
+                    method: 'PUT',
+                    headers: {
+                    'Authorization': `Bot ${botToken}`
+                    }
+                });
+                
+                // Build merge message
+                const mergerMention = mapToDiscord(merger);
+                let mergeNotification = `🎉 **MERGED BY** ${mergerMention}\n\n`;
+                
+                if (mergeMessage) {
+                    mergeNotification += `> ${mergeMessage}\n`;
+                }
+                
+                // Post in thread
+                if (metadata.thread_id) {
+                    await fetch(`https://discord.com/api/v10/channels/${metadata.thread_id}/messages`, {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bot ${botToken}`,
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        content: mergeNotification
+                    })
+                    });
+                    
+                    // Close the thread
+                    await fetch(`https://discord.com/api/v10/channels/${metadata.thread_id}`, {
+                    method: 'PATCH',
+                    headers: {
+                        'Authorization': `Bot ${botToken}`,
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        archived: true
+                    })
+                    });
+                }
+                
+                // Update parent message status
+                try {
+                    const messageResponse = await fetch(`https://discord.com/api/v10/channels/${metadata.channel_id}/messages/${metadata.message_id}`, {
+                    method: 'GET',
+                    headers: {
+                        'Authorization': `Bot ${botToken}`
+                    }
+                    });
+                    
+                    if (messageResponse.ok) {
+                    const messageData = await messageResponse.json();
+                    let content = messageData.content;
+                    
+                    // Update status
+                    content = content.replace(/Status: .*/g, 'Status: Merged');
+                    
+                    // Edit the message
+                    await fetch(`https://discord.com/api/v10/channels/${metadata.channel_id}/messages/${metadata.message_id}`, {
+                        method: 'PATCH',
+                        headers: {
+                        'Authorization': `Bot ${botToken}`,
+                        'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({
+                        content: content,
+                        flags: 4 // Suppress embeds
+                        })
+                    });
+                    }
+                } catch (e) {
+                    core.warning(`Failed to edit parent message: ${e.message}`);
+                }
