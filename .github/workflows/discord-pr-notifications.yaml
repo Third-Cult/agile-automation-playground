@@ -139,6 +139,7 @@ jobs:
               });
             }
 
+## REVIEWER ACTIONS ##
   handle-reviewer-added:
     if: github.event_name == 'pull_request' && github.event.action == 'review_requested'
     runs-on: ubuntu-latest
@@ -526,7 +527,7 @@ jobs:
             DISCORD_OPERATIONS_ROLE_ID: ${{ secrets.DISCORD_OPERATIONS_ROLE_ID }}
         with:
             script: |
-                const pr = context.payload.pull_request;
+                const pr = context.payload.pull_request; 
                 const review = context.payload.review;
                 const prNumber = pr.number;
                 const baseBranch = pr.base.ref;
@@ -538,19 +539,22 @@ jobs:
                 let reviewBody = review.body || '';
 
                 // If review body is empty, try fetching the full review details
-                if (!reviewBody || reviewBody.trim() === '') {
-                try {
-                    const fullReview = await github.rest.pulls.getReview({
-                    owner: context.repo.owner,
-                    repo: context.repo.repo,
-                    pull_number: prNumber,
-                    review_id: review.id
-                    });
-                    reviewBody = fullReview.data.body || '';
-                } catch (e) {
-                    core.warning(`Could not fetch review details: ${e.message}`);
-                    reviewBody = '';
-                }
+                if (!reviewBody || reviewBody.trim() === '') 
+                {
+                    try 
+                    {
+                        const fullReview = await github.rest.pulls.getReview({
+                        owner: context.repo.owner,
+                        repo: context.repo.repo,
+                        pull_number: prNumber,
+                        review_id: review.id
+                        });
+                        reviewBody = fullReview.data.body || '';
+                    } catch (e) 
+                    {
+                        core.warning(`Could not fetch review details: ${e.message}`);
+                        reviewBody = '';
+                    }
                 }
                 
                 // Skip if it's just a comment (not approval or changes requested)
@@ -628,6 +632,10 @@ jobs:
                 const authorMention = mapToDiscord(author);
                 let reviewMessage = `${emoji} **${statusText} BY** ${reviewerMention}\n\n`;
                 
+                // Debug: log review body
+                core.info(`Review body from payload: ${review.body || '(empty)'}`);
+                core.info(`Review body after fetch: ${reviewBody || '(empty)'}`)
+
                 if (reviewBody && reviewBody.trim() !== '') {
                   reviewMessage += `> ${reviewBody.replace(/\n/g, '\n> ')}\n\n`;
                 } else {
@@ -637,6 +645,19 @@ jobs:
                   } else if (reviewState === 'changes_requested') {
                     reviewMessage += `> Changes requested\n\n`;
                   }
+                }
+
+                // Add merge instructions for approvals
+                if (reviewState === 'approved') {
+                if (baseBranch === 'dev') {
+                    reviewMessage += `${authorMention} Ready to merge! 🚀`;
+                } else {
+                    const operationsRoleId = process.env.DISCORD_OPERATIONS_ROLE_ID;
+                    const operationsMention = operationsRoleId ? `<@&${operationsRoleId}>` : '@Operations';
+                    reviewMessage += `${authorMention} ${operationsMention} Ready to merge! 🚀`;
+                }
+                } else if (reviewState === 'changes_requested') {
+                reviewMessage += `${authorMention} Please address the requested changes.`;
                 }
                 
                 // Post in thread
