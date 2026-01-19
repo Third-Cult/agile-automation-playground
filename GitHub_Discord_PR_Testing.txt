@@ -39,8 +39,6 @@ Before testing, ensure:
 - [X] No link preview/embed (flags: 4 working)
 - [X] Thread name is "PR #<number>: <title>" (truncated if >100 chars)
 
-
-Closing the PR did not trigger the close logic.
 ---
 
 #### Test 1.2: Create Draft PR (With Reviewers)
