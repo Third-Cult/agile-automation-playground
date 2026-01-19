@@ -72,9 +72,9 @@ Before testing, ensure:
 2. Check Discord channel
 
 **Expected Results:**
-- [ ] No DRAFT marker
-- [ ] Reviewers listed correctly
-- [ ] Status: In Review
+- [X] No DRAFT marker
+- [X] Reviewers listed correctly
+- [X] Status: In Review
 
 ---
 
