@@ -47,10 +47,10 @@ Before testing, ensure:
 2. Check Discord channel
 
 **Expected Results:**
-- [ ] Message shows DRAFT marker
-- [ ] Both reviewers are @ mentioned
-- [ ] Shows "Status: In Review"
-- [ ] Thread created successfully
+- [X] Message shows DRAFT marker
+- [X] Both reviewers are @ mentioned
+- [X] Shows "Status: In Review"
+- [X] Thread created successfully
 
 ---
 
