@@ -1,0 +1,539 @@
+# Discord Bot Testing Plan
+
+This document outlines a systematic testing plan to verify all functionality of the Discord PR notification bot.
+
+## Prerequisites
+
+Before testing, ensure:
+- [X] Discord bot is set up and added to your server
+- [X] Bot has required permissions (Send Messages, Create Threads, Manage Threads, Add Reactions)
+- [X] All GitHub secrets are configured:
+  - [X] `DISCORD_BOT_TOKEN`
+  - [X] `DISCORD_PR_CHANNEL_ID`
+  - [X] `DISCORD_USER_MAPPING` (JSON with at least 2-3 test users)
+  - [X] `DISCORD_OPERATIONS_ROLE_ID` (optional)
+- [X] Test repository with the workflow file in place
+- [X] Access to create PRs and manage them
+
+## Test Scenarios
+
+### Phase 1: PR Creation & Initial State
+
+#### Test 1.1: Create Draft PR (No Reviewers)
+**Steps:**
+1. Create a new draft PR (no reviewers assigned)
+2. Check Discord channel
+
+**Expected Results:**
+- [ ] Message posted in Discord channel
+- [ ] Message shows "📝 **DRAFT** 🔀 **New Pull Request**"
+- [ ] PR title is a clickable link
+- [ ] Author is @ mentioned
+- [ ] Shows "⚠️ No reviewers assigned. Please add reviewers to this PR."
+- [ ] Shows "Status: In Review"
+- [ ] Thread created from the message
+- [ ] Thread message: "💬 Please keep PR discussions in this thread or in the PR comments on GitHub"
+- [ ] Hidden metadata comment created in PR
+
+**Verify:**
+- [ ] No link preview/embed (flags: 4 working)
+- [ ] Thread name is "PR #<number>: <title>" (truncated if >100 chars)
+
+---
+
+#### Test 1.2: Create Draft PR (With Reviewers)
+**Steps:**
+1. Create a new draft PR with 2 reviewers assigned
+2. Check Discord channel
+
+**Expected Results:**
+- [ ] Message shows DRAFT marker
+- [ ] Both reviewers are @ mentioned
+- [ ] Shows "Status: In Review"
+- [ ] Thread created successfully
+
+---
+
+#### Test 1.3: Create Ready PR (No Reviewers)
+**Steps:**
+1. Create a new PR (not draft, no reviewers)
+2. Check Discord channel
+
+**Expected Results:**
+- [ ] Message does NOT show DRAFT marker
+- [ ] Shows warning about no reviewers
+- [ ] Shows "Status: In Review"
+
+---
+
+#### Test 1.4: Create Ready PR (With Reviewers)
+**Steps:**
+1. Create a new PR (not draft) with reviewers
+2. Check Discord channel
+
+**Expected Results:**
+- [ ] No DRAFT marker
+- [ ] Reviewers listed correctly
+- [ ] Status: In Review
+
+---
+
+### Phase 2: Draft PR Conversion
+
+#### Test 2.1: Convert Draft to Ready
+**Steps:**
+1. Create a draft PR (from Test 1.1 or 1.2)
+2. Mark PR as "Ready for review" (remove draft status)
+3. Check Discord
+
+**Expected Results:**
+- [ ] Parent message DRAFT marker removed
+- [ ] Thread message: "✅ This PR is now ready for review!"
+- [ ] Status remains: In Review
+
+**Note:** This handler may not exist yet - verify if it's implemented.
+
+---
+
+### Phase 3: Reviewer Management
+
+#### Test 3.1: Add Single Reviewer
+**Steps:**
+1. Use PR from Test 1.3 (no reviewers)
+2. Add one reviewer
+3. Check Discord
+
+**Expected Results:**
+- [ ] Thread message: "@reviewer You've been added as a reviewer to this PR!"
+- [ ] Parent message updated: "Reviewers:" line now includes the reviewer
+- [ ] "⚠️ No reviewers assigned" warning removed
+
+---
+
+#### Test 3.2: Add Multiple Reviewers (Sequentially)
+**Steps:**
+1. Use PR with 1 reviewer
+2. Add a second reviewer
+3. Add a third reviewer
+4. Check Discord after each addition
+
+**Expected Results:**
+- [ ] Each addition posts a thread message
+- [ ] Parent message Reviewers line updates correctly
+- [ ] All reviewers listed in parent message
+- [ ] No duplicate reviewers
+
+---
+
+#### Test 3.3: Add Multiple Reviewers (Simultaneously)
+**Steps:**
+1. Use PR with no reviewers
+2. Add 2-3 reviewers at the same time
+3. Check Discord
+
+**Expected Results:**
+- [ ] All reviewers appear in parent message
+- [ ] Thread messages for each reviewer (may be multiple)
+- [ ] No duplicates or missing reviewers
+
+---
+
+#### Test 3.4: Remove Reviewer
+**Steps:**
+1. Use PR with multiple reviewers
+2. Remove one reviewer
+3. Check Discord
+
+**Expected Results:**
+- [ ] Thread message: "👋 @reviewer has been removed as a reviewer from this PR."
+- [ ] Reviewer removed from Discord thread (if they were in it)
+- [ ] Parent message Reviewers line updated (reviewer removed)
+- [ ] If last reviewer removed, shows "⚠️ No reviewers assigned" warning
+
+---
+
+#### Test 3.5: Remove All Reviewers
+**Steps:**
+1. Use PR with reviewers
+2. Remove all reviewers
+3. Check Discord
+
+**Expected Results:**
+- [ ] All reviewers removed from parent message
+- [ ] Warning message appears: "⚠️ No reviewers assigned"
+- [ ] Status remains: In Review
+
+---
+
+### Phase 4: Review States
+
+#### Test 4.1: Approve PR (With Comment)
+**Steps:**
+1. Use PR that's "In Review"
+2. Approve with a review comment
+3. Check Discord
+
+**Expected Results:**
+- [ ] ✅ reaction added to parent message
+- [ ] Thread message shows:
+  - "✅ **APPROVED BY** @reviewer"
+  - Review comment in quote block
+  - "@author Ready to merge! 🚀" (if base is `dev`)
+  - "@author @Operations Ready to merge! 🚀" (if base is NOT `dev`)
+- [ ] Parent message Status updated to: "Status: Approved"
+- [ ] Old review status lines removed (if any)
+
+---
+
+#### Test 4.2: Approve PR (Without Comment)
+**Steps:**
+1. Use PR that's "In Review"
+2. Approve without leaving a comment
+3. Check Discord
+
+**Expected Results:**
+- [ ] ✅ reaction added
+- [ ] Thread message shows: "> Approved without comment"
+- [ ] Status updated to: "Status: Approved"
+- [ ] Merge instructions still shown
+
+---
+
+#### Test 4.3: Request Changes (With Comment)
+**Steps:**
+1. Use PR that's "In Review" or "Approved"
+2. Request changes with a comment explaining what needs to change
+3. Check Discord
+
+**Expected Results:**
+- [ ] ❌ reaction added to parent message
+- [ ] Thread message shows:
+  - "❌ **CHANGES REQUESTED BY** @reviewer"
+  - Review comment in quote block
+  - "@author Please address the requested changes."
+- [ ] Parent message Status updated to: "Status: Needs Changes"
+- [ ] If previously "Approved", status changes to "Needs Changes"
+
+---
+
+#### Test 4.4: Request Changes (Without Comment)
+**Steps:**
+1. Use PR that's "In Review"
+2. Request changes without a comment
+3. Check Discord
+
+**Expected Results:**
+- [ ] ❌ reaction added
+- [ ] Thread message shows: "> Changes requested"
+- [ ] Status updated to: "Status: Needs Changes"
+
+---
+
+#### Test 4.5: Multiple Approvals
+**Steps:**
+1. Use PR with multiple reviewers
+2. First reviewer approves
+3. Second reviewer approves
+4. Check Discord after each
+
+**Expected Results:**
+- [ ] Each approval posts separate thread message
+- [ ] Status remains "Status: Approved" (doesn't change)
+- [ ] Both approval messages visible in thread
+- [ ] Multiple ✅ reactions on parent message (one per approval)
+
+---
+
+#### Test 4.6: Approval After Changes Requested
+**Steps:**
+1. Use PR that has "Needs Changes" status
+2. Reviewer approves the PR
+3. Check Discord
+
+**Expected Results:**
+- [ ] Status changes from "Status: Needs Changes" to "Status: Approved"
+- [ ] New approval message in thread
+- [ ] Both ❌ and ✅ reactions on parent message
+
+---
+
+#### Test 4.7: Changes Requested After Approval
+**Steps:**
+1. Use PR that's "Approved"
+2. Different reviewer requests changes
+3. Check Discord
+
+**Expected Results:**
+- [ ] Status changes from "Status: Approved" to "Status: Needs Changes"
+- [ ] Changes requested message in thread
+- [ ] Both ✅ and ❌ reactions on parent message
+
+---
+
+### Phase 5: Review Dismissal
+
+#### Test 5.1: Dismiss Changes Requested Review
+**Steps:**
+1. Use PR with "Needs Changes" status
+2. Dismiss the changes_requested review
+3. Check Discord
+
+**Expected Results:**
+- [ ] Thread message: "✅ @reviewer The requested changes have been addressed. Please review the updates."
+- [ ] Status should update to: "Status: In Review" (verify if implemented)
+- [ ] Reviewer is @ mentioned
+
+**Note:** Verify if status update is implemented.
+
+---
+
+#### Test 5.2: Dismiss Approved Review
+**Steps:**
+1. Use PR with "Approved" status
+2. Dismiss an approved review
+3. Check Discord
+
+**Expected Results:**
+- [ ] No message posted (only handles changes_requested dismissals)
+- [ ] Status remains: Approved (if other approvals exist)
+
+---
+
+### Phase 6: PR Closure
+
+#### Test 6.1: Merge PR (Into Dev)
+**Steps:**
+1. Use PR that's "Approved" and targeting `dev` branch
+2. Merge the PR
+3. Check Discord
+
+**Expected Results:**
+- [ ] 🎉 reaction added to parent message
+- [ ] Thread message: "🎉 **MERGED BY** @merger"
+- [ ] Merge commit message shown (if available)
+- [ ] Parent message Status updated to: "Status: Merged"
+- [ ] Thread is closed/archived
+
+---
+
+#### Test 6.2: Merge PR (Into Non-Dev Branch)
+**Steps:**
+1. Use PR that's "Approved" and targeting branch other than `dev`
+2. Merge the PR
+3. Check Discord
+
+**Expected Results:**
+- [ ] Same as Test 6.1
+- [ ] Status: Merged
+- [ ] Thread closed
+
+---
+
+#### Test 6.3: Close PR Without Merge
+**Steps:**
+1. Use any PR (In Review, Approved, or Needs Changes)
+2. Close the PR without merging
+3. Check Discord
+
+**Expected Results:**
+- [ ] Thread message: "🚫 **CLOSED BY** @closer"
+- [ ] Closing comment shown (if available)
+- [ ] Parent message Status updated to: "Status: Closed"
+- [ ] Thread remains open (not archived)
+
+---
+
+#### Test 6.4: Close PR With Comment
+**Steps:**
+1. Use a PR
+2. Add a comment explaining why it's being closed
+3. Close the PR
+4. Check Discord
+
+**Expected Results:**
+- [ ] Closing comment appears in thread message
+- [ ] Comment formatted as quote block
+
+---
+
+### Phase 7: Edge Cases & Error Handling
+
+#### Test 7.1: PR Without Metadata Comment
+**Steps:**
+1. Manually delete the metadata comment from a PR
+2. Trigger any event (add reviewer, approve, etc.)
+3. Check workflow logs
+
+**Expected Results:**
+- [ ] Workflow completes without error
+- [ ] Warning logged: "No Discord metadata found for this PR. Skipping."
+- [ ] No Discord messages posted
+
+---
+
+#### Test 7.2: Discord Message Deleted
+**Steps:**
+1. Create a PR (gets Discord message)
+2. Manually delete the Discord message
+3. Trigger an event that tries to edit the message
+4. Check workflow logs
+
+**Expected Results:**
+- [ ] Workflow handles error gracefully
+- [ ] Warning logged about message not found
+- [ ] Workflow doesn't fail completely
+
+---
+
+#### Test 7.3: Thread Archived/Deleted
+**Steps:**
+1. Create a PR
+2. Manually archive/delete the Discord thread
+3. Trigger an event that posts to thread
+4. Check workflow logs
+
+**Expected Results:**
+- [ ] Workflow handles error gracefully
+- [ ] Warning logged
+- [ ] Workflow continues
+
+---
+
+#### Test 7.4: Missing User Mapping
+**Steps:**
+1. Create PR with reviewer not in `DISCORD_USER_MAPPING`
+2. Check Discord
+
+**Expected Results:**
+- [ ] Reviewer mentioned as `@github_username` (fallback)
+- [ ] No error thrown
+- [ ] Workflow completes successfully
+
+---
+
+#### Test 7.5: Very Long PR Title
+**Steps:**
+1. Create PR with title > 100 characters
+2. Check Discord
+
+**Expected Results:**
+- [ ] Thread name truncated to 100 characters
+- [ ] Full title in parent message
+- [ ] No errors
+
+---
+
+#### Test 7.6: PR With Special Characters
+**Steps:**
+1. Create PR with special characters in title (emojis, markdown, etc.)
+2. Check Discord
+
+**Expected Results:**
+- [ ] Message renders correctly
+- [ ] No parsing errors
+- [ ] Special characters displayed properly
+
+---
+
+#### Test 7.7: Rapid Sequential Events
+**Steps:**
+1. Create PR
+2. Quickly add reviewer, then approve, then merge (within seconds)
+3. Check Discord
+
+**Expected Results:**
+- [ ] All events processed
+- [ ] Messages appear in correct order
+- [ ] Final status is "Merged"
+- [ ] No race conditions or missing updates
+
+---
+
+### Phase 8: Status Line Verification
+
+#### Test 8.1: Status Line Updates
+**Steps:**
+1. Create PR → Verify "Status: In Review"
+2. Request changes → Verify "Status: Needs Changes"
+3. Dismiss review → Verify "Status: In Review" (if implemented)
+4. Approve → Verify "Status: Approved"
+5. Merge → Verify "Status: Merged"
+
+**Expected Results:**
+- [ ] Only ONE Status line exists at any time
+- [ ] Previous status replaced, not appended
+- [ ] Status line in correct location (after Reviewers)
+
+---
+
+#### Test 8.2: Status Line Missing (Old PR)
+**Steps:**
+1. Manually edit Discord message to remove Status line
+2. Trigger an event that updates status
+3. Check Discord
+
+**Expected Results:**
+- [ ] Status line added back
+- [ ] Added in correct location
+- [ ] No duplicate status lines
+
+---
+
+## Verification Checklist
+
+After completing all tests, verify:
+
+### Functionality
+- [ ] All PR states handled correctly
+- [ ] Status transitions work as expected
+- [ ] Reviewers added/removed correctly
+- [ ] Review comments appear in thread
+- [ ] Merge/close events handled
+- [ ] Thread management works (creation, closure)
+
+### Message Formatting
+- [ ] No link embeds (flags: 4 working)
+- [ ] @ mentions work correctly
+- [ ] Emojis display properly
+- [ ] Markdown formatting correct
+- [ ] Long content handled gracefully
+
+### Error Handling
+- [ ] Missing metadata handled gracefully
+- [ ] Deleted messages don't crash workflow
+- [ ] Missing user mappings handled
+- [ ] Network errors logged but don't fail workflow
+
+### Edge Cases
+- [ ] Multiple simultaneous events handled
+- [ ] Special characters work
+- [ ] Very long titles handled
+- [ ] Empty review bodies handled
+
+## Common Issues to Watch For
+
+1. **Status not updating** - Check if Status line replacement logic works
+2. **Review body not showing** - Check API fetch and formatting
+3. **Duplicate reviewers** - Check reviewer update logic
+4. **Thread not closing on merge** - Check thread archive API call
+5. **Missing @ mentions** - Check user mapping JSON format
+6. **Workflow failures** - Check GitHub Actions logs for specific errors
+
+## Testing Order Recommendation
+
+1. Start with Phase 1 (PR Creation) - Foundation
+2. Test Phase 3 (Reviewer Management) - Simple updates
+3. Test Phase 4 (Review States) - Core functionality
+4. Test Phase 6 (PR Closure) - End states
+5. Test Phase 2 (Draft Conversion) - If implemented
+6. Test Phase 5 (Review Dismissal) - Edge case
+7. Test Phase 7 (Edge Cases) - Error handling
+8. Test Phase 8 (Status Verification) - Final validation
+
+## Notes
+
+- Test in a dedicated test repository to avoid cluttering production channels
+- Use test Discord channel separate from production
+- Keep test PRs open until all tests complete, then clean up
+- Document any failures or unexpected behavior
+- Check GitHub Actions workflow logs for detailed error messages
