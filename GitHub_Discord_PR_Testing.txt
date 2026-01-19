@@ -25,20 +25,22 @@ Before testing, ensure:
 2. Check Discord channel
 
 **Expected Results:**
-- [ ] Message posted in Discord channel
-- [ ] Message shows "📝 **DRAFT** 🔀 **New Pull Request**"
-- [ ] PR title is a clickable link
-- [ ] Author is @ mentioned
-- [ ] Shows "⚠️ No reviewers assigned. Please add reviewers to this PR."
-- [ ] Shows "Status: In Review"
-- [ ] Thread created from the message
-- [ ] Thread message: "💬 Please keep PR discussions in this thread or in the PR comments on GitHub"
-- [ ] Hidden metadata comment created in PR
+- [X] Message posted in Discord channel
+- [X] Message shows "📝 **DRAFT** 🔀 **New Pull Request**"
+- [X] PR title is a clickable link
+- [X] Author is @ mentioned
+- [X] Shows "⚠️ No reviewers assigned. Please add reviewers to this PR."
+- [X] Shows "Status: In Review"
+- [X] Thread created from the message
+- [X] Thread message: "💬 Please keep PR discussions in this thread or in the PR comments on GitHub"
+- [X] Hidden metadata comment created in PR
 
 **Verify:**
-- [ ] No link preview/embed (flags: 4 working)
-- [ ] Thread name is "PR #<number>: <title>" (truncated if >100 chars)
+- [X] No link preview/embed (flags: 4 working)
+- [X] Thread name is "PR #<number>: <title>" (truncated if >100 chars)
 
+
+Closing the PR did not trigger the close logic.
 ---
 
 #### Test 1.2: Create Draft PR (With Reviewers)
