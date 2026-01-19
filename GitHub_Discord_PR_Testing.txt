@@ -60,9 +60,9 @@ Before testing, ensure:
 2. Check Discord channel
 
 **Expected Results:**
-- [ ] Message does NOT show DRAFT marker
-- [ ] Shows warning about no reviewers
-- [ ] Shows "Status: In Review"
+- [X] Message does NOT show DRAFT marker
+- [X] Shows warning about no reviewers
+- [X] Shows "Status: In Review"
 
 ---
 
