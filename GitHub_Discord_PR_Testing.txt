@@ -206,17 +206,18 @@ Before testing, ensure:
 3. Check Discord
 
 **Expected Results:**
-- [ ] ❌ reaction added to parent message
-- [ ] Thread message shows:
+- [X] ❌ reaction added to parent message
+- [X] Thread message shows:
   - "❌ **CHANGES REQUESTED BY** @reviewer"
   - Review comment in quote block
   - "@author Please address the requested changes."
-- [ ] Parent message Status updated to: "Status: Needs Changes"
-- [ ] If previously "Approved", status changes to "Needs Changes"
+- [X] Parent message Status updated to: "Status: Needs Changes"
+- [X] If previously "Approved", status changes to "Needs Changes"
 
 ---
 
 #### Test 4.4: Request Changes (Without Comment)
+Not possible to test - GitHub doesn't allow request changes without comment
 **Steps:**
 1. Use PR that's "In Review"
 2. Request changes without a comment
@@ -237,10 +238,9 @@ Before testing, ensure:
 4. Check Discord after each
 
 **Expected Results:**
-- [ ] Each approval posts separate thread message
-- [ ] Status remains "Status: Approved" (doesn't change)
-- [ ] Both approval messages visible in thread
-- [ ] Multiple ✅ reactions on parent message (one per approval)
+- [X] Each approval posts separate thread message
+- [X] Status remains "Status: Approved" (doesn't change)
+- [X] Both approval messages visible in thread
 
 ---
 
@@ -251,9 +251,8 @@ Before testing, ensure:
 3. Check Discord
 
 **Expected Results:**
-- [ ] Status changes from "Status: Needs Changes" to "Status: Approved"
-- [ ] New approval message in thread
-- [ ] Both ❌ and ✅ reactions on parent message
+- [X] Status changes from "Status: Needs Changes" to "Status: Approved"
+- [X] New approval message in thread
 
 ---
 
@@ -264,68 +263,21 @@ Before testing, ensure:
 3. Check Discord
 
 **Expected Results:**
-- [ ] Status changes from "Status: Approved" to "Status: Needs Changes"
-- [ ] Changes requested message in thread
-- [ ] Both ✅ and ❌ reactions on parent message
+- [X] Status changes from "Status: Approved" to "Status: Needs Changes"
+- [X] Changes requested message in thread
 
----
-
-### Phase 5: Review Dismissal
-
-#### Test 5.1: Dismiss Changes Requested Review
-**Steps:**
-1. Use PR with "Needs Changes" status
-2. Dismiss the changes_requested review
-3. Check Discord
-
-**Expected Results:**
-- [ ] Thread message: "✅ @reviewer The requested changes have been addressed. Please review the updates."
-- [ ] Status should update to: "Status: In Review" (verify if implemented)
-- [ ] Reviewer is @ mentioned
-
-**Note:** Verify if status update is implemented.
-
----
-
-#### Test 5.2: Dismiss Approved Review
-**Steps:**
-1. Use PR with "Approved" status
-2. Dismiss an approved review
-3. Check Discord
-
-**Expected Results:**
-- [ ] No message posted (only handles changes_requested dismissals)
-- [ ] Status remains: Approved (if other approvals exist)
-
----
-
-### Phase 6: PR Closure
-
-#### Test 6.1: Merge PR (Into Dev)
-**Steps:**
-1. Use PR that's "Approved" and targeting `dev` branch
-2. Merge the PR
-3. Check Discord
-
-**Expected Results:**
-- [ ] 🎉 reaction added to parent message
-- [ ] Thread message: "🎉 **MERGED BY** @merger"
-- [ ] Merge commit message shown (if available)
-- [ ] Parent message Status updated to: "Status: Merged"
-- [ ] Thread is closed/archived
-
----
-
-#### Test 6.2: Merge PR (Into Non-Dev Branch)
+#### Test 6.2: Merge PR
 **Steps:**
 1. Use PR that's "Approved" and targeting branch other than `dev`
 2. Merge the PR
 3. Check Discord
 
 **Expected Results:**
-- [ ] Same as Test 6.1
-- [ ] Status: Merged
-- [ ] Thread closed
+- [X] 🎉 reaction added to parent message
+- [X] Thread message: "🎉 **MERGED BY** @merger"
+- [X] Merge commit message shown (if available)
+- [X] Parent message Status updated to: "Status: Merged"
+- [ ] Thread is locked
 
 ---
 
@@ -336,10 +288,10 @@ Before testing, ensure:
 3. Check Discord
 
 **Expected Results:**
-- [ ] Thread message: "🚫 **CLOSED BY** @closer"
-- [ ] Closing comment shown (if available)
-- [ ] Parent message Status updated to: "Status: Closed"
-- [ ] Thread remains open (not archived)
+- [X] Thread message: "🚫 **CLOSED BY** @closer"
+- [X] Closing comment shown (if available)
+- [X] Parent message Status updated to: "Status: Closed"
+- [ ] Thread locks
 
 ---
 
@@ -535,3 +487,5 @@ After completing all tests, verify:
 ## Missing tests
 When a PR has been approved but then gets added to, the status needs to return to in review and the reviewers notified again and rerequested on the pr
 The '✅ APPROVED by <person>' line is duplicating on the parent after multiple times - those were supposed to be placed after the Status: <> message and update/overwrite one another
+Rerequesting a reviewer should have a different message than adding a reviewer
+The reactions are mutually exclusive - only one should be active at a time
