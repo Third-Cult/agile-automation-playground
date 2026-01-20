@@ -41,7 +41,7 @@ export function buildPRMessage(params: {
   // Reviewers section
   if (reviewerLogins.length > 0) {
     const reviewerMentions = reviewerLogins.map((login) => mapToDiscord(login, userMapping)).join(' ');
-    message += `**Reviewers:** ${reviewerMentions}\n`;
+    message += `**Reviewers:** ${reviewerMentions}\n\n`;
   } else {
     // ANSI warning format in code block
     message += `\`\`\`ansi\n`;
@@ -101,7 +101,7 @@ export function updateReviewersLine(
 
   if (reviewerLogins.length > 0) {
     const reviewerMentions = reviewerLogins.map((login) => mapToDiscord(login, userMapping)).join(' ');
-    rebuiltLines.push(`**Reviewers:** ${reviewerMentions}`);
+    rebuiltLines.push(`**Reviewers:** ${reviewerMentions}\n\n`);
   } else {
     rebuiltLines.push(`\`\`\`ansi\n`);
     rebuiltLines.push(`\u001b[2;33mWARNING::No reviewers assigned:\u001b[0m`);
