@@ -534,3 +534,4 @@ After completing all tests, verify:
 
 ## Missing tests
 When a PR has been approved but then gets added to, the status needs to return to in review and the reviewers notified again and rerequested on the pr
+The '✅ APPROVED by <person>' line is duplicating on the parent after multiple times - those were supposed to be placed after the Status: <> message and update/overwrite one another
