@@ -23,6 +23,7 @@ jobs:
           DISCORD_OPERATIONS_ROLE_ID: ${{ secrets.DISCORD_OPERATIONS_ROLE_ID }}
         with:
           script: |
+            // Pull out the information from the PR
             const pr = context.payload.pull_request;
             const isDraft = pr.draft;
             const prNumber = pr.number;
@@ -30,12 +31,14 @@ jobs:
             const prUrl = pr.html_url;
             const author = pr.user.login;
             const baseBranch = pr.base.ref;
+            const headBranch = pr.head.ref;
+            const prDescription = pr.body || '';
             
-            // Get reviewers
+            // Get reviewers and their associative usernames
             const reviewers = pr.requested_reviewers || [];
             const reviewerLogins = reviewers.map(r => r.login);
             
-            // Load user mapping
+            // Load user mapping (GitHub to Discord user ID)
             const userMapping = process.env.DISCORD_USER_MAPPING 
               ? JSON.parse(process.env.DISCORD_USER_MAPPING) 
               : {};
@@ -47,22 +50,33 @@ jobs:
                 : `@${githubUsername}`;
             };
             
-            // Build message
-            const draftPrefix = isDraft ? '📝 **DRAFT** ' : '';
-            let message = `${draftPrefix}🔀 **New Pull Request**\n\n`;
-            message += `[PR #${prNumber}: ${prTitle}](${prUrl})\n`;
-            message += `Author: ${mapToDiscord(author)}\n`;
+            // Build message:
+            let message = `## [PR #${prNumber}: ${prTitle}](${prUrl})\n`;
+            message += `# \`${headBranch}\` -> \`${baseBranch}\`\n\n`;
+            message += `**Author:** ${mapToDiscord(author)}\n`;
+
+            // Add PR description if it exists
+            if (prDescription && prDescription.trim() !== '') {
+            message += `${prDescription}\n\n`;
+            }
 
             if (reviewerLogins.length > 0) 
             {
                 const reviewerMentions = reviewerLogins.map(mapToDiscord).join(' ');
-                message += `Reviewers: ${reviewerMentions}\n`;
+                message += `**Reviewers:** ${reviewerMentions}\n`;
             } else 
             {
-                message += `\n⚠️ No reviewers assigned. Please add reviewers to this PR.\n`;
+                // ANSI warning format
+                message += `\u001b[2;33mWARNING::No reviewers assigned:\u001b[0m\n`;
+                message += `PR has to be reviewed by another member before merging.\n\n`;
             }
 
-            message += `\nStatus: In Review\n`;
+            // Status - check if draft
+            if (isDraft) {
+            message += `**Status**: :pencil: Draft - In Progress\n`;
+            } else {
+            message += `**Status**: :eyes: Ready for Review\n`;
+            }
             
             // Post to Discord
             const channelId = process.env.DISCORD_CHANNEL_ID;
@@ -124,7 +138,7 @@ jobs:
                   'Content-Type': 'application/json',
                 },
                 body: JSON.stringify({
-                  content: '💬 Please keep PR discussions in this thread or in the PR comments on GitHub'
+                  content: ':thread: Keep all conversations/dialogue about the contents of the PR in this thread **or** in the PR\'s comments'
                 })
               });
               
@@ -216,8 +230,7 @@ jobs:
                 const messageData = await messageResponse.json();
                 let content = messageData.content;
 
-                // Remove DRAFT prefix if present
-                content = content.replace(/📝 \*\*DRAFT\*\* /g, '');
+                content = content.replace(/\*\*Status\*\*: :pencil: Draft - In Progress/g, '**Status**: :eyes: Ready for Review');
 
                 // Edit the message
                 await fetch(`https://discord.com/api/v10/channels/${metadata.channel_id}/messages/${metadata.message_id}`, {
@@ -244,7 +257,7 @@ jobs:
                 'Content-Type': 'application/json',
                 },
                 body: JSON.stringify({
-                content: '✅ This PR is now ready for review!'
+                content: ':eyes: This PR is now ready for review!'
                 })
             });
 
@@ -264,6 +277,7 @@ jobs:
           script: |
             const pr = context.payload.pull_request;
             const prNumber = pr.number;
+            const prUrl = pr.html_url;
 
             // Get ALL current reviewers from PR (not just the one that triggered the event)
             const allReviewers = pr.requested_reviewers || [];
@@ -337,7 +351,7 @@ jobs:
                 'Content-Type': 'application/json',
                 },
                 body: JSON.stringify({
-                content: `${reviewerMention} You've been added as a reviewer to this PR!`
+                content: `:bellhop: ${reviewerMention} - your review as been requested for [PR #${prNumber}](${prUrl})`
                 })
             });
             }
@@ -363,7 +377,7 @@ jobs:
                 
                 // Find the reviewers line or no reviewers warning
                 for (let i = 0; i < lines.length; i++) {
-                if (lines[i].includes('Reviewers:') || lines[i].includes('⚠️ No reviewers assigned')) {
+                if (lines[i].includes('Reviewers:') || lines[i].includes('WARNING::No reviewers assigned')) {
                     reviewersLineIndex = i;
                     break;
                 }
@@ -374,7 +388,7 @@ jobs:
                 afterReviewers = lines.slice(reviewersLineIndex + 1);
                 } else {
                 // If no reviewers line found, assume it should be after the Author line
-                const authorLineIndex = lines.findIndex(line => line.startsWith('Author:'));
+                const authorLineIndex = lines.findIndex(line => line.startsWith('**Author:**'));
                 if (authorLineIndex >= 0) {
                     beforeReviewers = lines.slice(0, authorLineIndex + 1);
                     afterReviewers = lines.slice(authorLineIndex + 1);
@@ -389,9 +403,10 @@ jobs:
                 
                 if (allReviewerLogins.length > 0) {
                 const reviewerMentions = allReviewerLogins.map(mapToDiscord).join(' ');
-                rebuiltLines.push(`Reviewers: ${reviewerMentions}`);
+                rebuiltLines.push(`**Reviewers:** ${reviewerMentions}`);
                 } else {
-                rebuiltLines.push(`\n⚠️ No reviewers assigned. Please add reviewers to this PR.`);
+                  rebuiltLines.push(`\u001b[2;33mWARNING::No reviewers assigned:\u001b[0m\n`);
+                rebuiltLines.push(`PR has to be reviewed by another member before merging.\n\n`);
                 }
                 
                 rebuiltLines.push(...afterReviewers);
@@ -580,7 +595,7 @@ jobs:
                     // Find the reviewers line or no reviewers warning
                     for (let i = 0; i < lines.length; i++) 
                     {
-                        if (lines[i].includes('Reviewers:') || lines[i].includes('⚠️ No reviewers assigned')) 
+                        if (lines[i].includes('Reviewers:') || lines[i].includes('WARNING::No reviewers assigned:')) 
                         {
                           reviewersLineIndex = i;
                           break;
@@ -594,7 +609,7 @@ jobs:
                 } else 
                 {
                     // If no reviewers line found, assume it should be after the Author line
-                    const authorLineIndex = lines.findIndex(line => line.startsWith('Author:'));
+                    const authorLineIndex = lines.findIndex(line => line.startsWith('**Author:**'));
                     if (authorLineIndex >= 0) 
                     {
                         beforeReviewers = lines.slice(0, authorLineIndex + 1);
@@ -612,10 +627,11 @@ jobs:
                 if (allReviewerLogins.length > 0) 
                 {
                     const reviewerMentions = allReviewerLogins.map(mapToDiscord).join(' ');
-                    rebuiltLines.push(`Reviewers: ${reviewerMentions}`);
+                    rebuiltLines.push(`**Reviewers:** ${reviewerMentions}`);
                 } else 
                  {
-                    rebuiltLines.push(`\n⚠️ No reviewers assigned. Please add reviewers to this PR.`);
+                      rebuiltLines.push(`\u001b[2;33mWARNING::No reviewers assigned:\u001b[0m\n`);
+                      rebuiltLines.push(`PR has to be reviewed by another member before merging.\n\n`);
                 }
                 
                 rebuiltLines.push(...afterReviewers);
@@ -799,34 +815,26 @@ jobs:
                 // Build review message for thread
                 const reviewerMention = mapToDiscord(reviewer);
                 const authorMention = mapToDiscord(author);
-                let reviewMessage = `${emoji} **${statusText} BY** ${reviewerMention}\n\n`;
                 
                 // Debug: log review body
                 core.info(`Review body from payload: ${review.body || '(empty)'}`);
                 core.info(`Review body after fetch: ${reviewBody || '(empty)'}`);
-
-                if (reviewBody && reviewBody.trim() !== '') {
-                  reviewMessage += `> ${reviewBody.replace(/\n/g, '\n> ')}\n\n`;
-                } else {
-                  // If no review body, still add a note
-                  if (reviewState === 'approved') {
-                    reviewMessage += `> Approved without comment\n\n`;
-                  } else if (reviewState === 'changes_requested') {
-                    reviewMessage += `> Changes requested\n\n`;
-                  }
-                }
-
-                // Add merge instructions for approvals
-                if (reviewState === 'approved') {
-                if (baseBranch === 'dev') {
-                    reviewMessage += `${authorMention} Ready to merge! 🚀`;
-                } else {
-                    const operationsRoleId = process.env.DISCORD_OPERATIONS_ROLE_ID;
-                    const operationsMention = operationsRoleId ? `<@&${operationsRoleId}>` : '@Operations';
-                    reviewMessage += `${authorMention} ${operationsMention} Ready to merge! 🚀`;
-                }
-                } else if (reviewState === 'changes_requested') {
-                reviewMessage += `${authorMention} Please address the requested changes.`;
+                
+                if (reviewState === 'approved') 
+                {
+                    reviewMessage = `:white_check_mark: ${authorMention} - ${reviewerMention} has approved the PR\n`;
+                    if (reviewBody && reviewBody.trim() !== '') {
+                    reviewMessage += `> ${reviewBody.replace(/\n/g, '\n> ')}\n\n`;
+                    }
+                    reviewMessage += `Feel free to merge if all other conditions have been met`;
+                    
+                } else if (reviewState === 'changes_requested') 
+                {
+                    reviewMessage = `:tools: ${authorMention} - changes have been requested by ${reviewerMention}.\n`;
+                    if (reviewBody && reviewBody.trim() !== '') {
+                    reviewMessage += `> ${reviewBody.replace(/\n/g, '\n> ')}\n\n`;
+                    }
+                    reviewMessage += `Please resolve them and re-request a review.`;
                 }
                 
                 // Post in thread
@@ -878,18 +886,12 @@ jobs:
                     for (let i = 0; i < lines.length; i++) {
                       const line = lines[i];
                       
-                      // Skip any existing approval/changes status lines (they should only be in thread)
-                      if (line.includes('✅ APPROVED') || line.includes('❌ CHANGES REQUESTED') || 
-                          line.includes('✅ **APPROVED') || line.includes('❌ **CHANGES REQUESTED')) {
-                        continue; // Skip these lines
-                      }
-                      
                       // Update status line if found
-                      if (line.startsWith('Status:')) {
+                      if (line.startsWith('**Status**:')) {
                         if (reviewState === 'approved') {
-                          newLines.push('Status: Approved');
+                        newLines.push(`**Status**: :white_check_mark: Approved by ${reviewerMention}`);
                         } else if (reviewState === 'changes_requested') {
-                          newLines.push('Status: Needs Changes');
+                        newLines.push(`**Status**: :tools: Changes Requested by ${reviewerMention}`);
                         } else {
                           newLines.push(line); // Keep original if unknown state
                         }
@@ -902,14 +904,14 @@ jobs:
                     // If no status line was found, add it after Reviewers
                     if (!statusLineFound) {
                       const reviewersIndex = newLines.findIndex(line => 
-                        line.includes('Reviewers:') || line.includes('⚠️ No reviewers assigned')
+                        line.includes('Reviewers:') || line.includes('WARNING::No reviewers assigned')
                       );
                       if (reviewersIndex >= 0) {
                         newLines.splice(reviewersIndex + 1, 0, 
-                          reviewState === 'approved' ? 'Status: Approved' : 'Status: Needs Changes'
+                            reviewState === 'approved' ? `**Status**: :white_check_mark: Approved by ${reviewerMention}` : `**Status**: :tools: Changes Requested by ${reviewerMention}`
                         );
                       } else {
-                        newLines.push(reviewState === 'approved' ? 'Status: Approved' : 'Status: Needs Changes');
+                        newLines.push(  reviewState === 'approved' ? `**Status**: :white_check_mark: Approved by ${reviewerMention}` : `**Status**: :tools: Changes Requested by ${reviewerMention}`);
                       }
                     }
 
@@ -1021,7 +1023,7 @@ jobs:
                 const content = messageData.content;
 
                 // Check if status is "Approved"
-                const isApproved = content.includes('Status: Approved');
+                const isApproved = content.includes('**Status**: :white_check_mark: Approved');
 
                 if (isApproved) {
                 // Get current reviewers
@@ -1047,8 +1049,8 @@ jobs:
                 // Update status to "In Review"
                 const lines = content.split('\n');
                 const newLines = lines.map(line => {
-                    if (line.startsWith('Status:')) {
-                    return 'Status: In Review';
+                    if (line.startsWith('**Status**:')) {
+                    return '**Status**: :eyes: Ready for Review';
                     }
                     return line;
                 });
@@ -1218,7 +1220,7 @@ jobs:
                     let content = messageData.content;
                     
                     // Update status from "Needs Changes" to "In Review"
-                    content = content.replace(/Status: .*/g, 'Status: In Review');
+                    content = content.replace(/\*\*Status\*\*: .*/g, '**Status**: :eyes: Ready for Review');
                     
                     // Edit the message
                     await fetch(`https://discord.com/api/v10/channels/${metadata.channel_id}/messages/${metadata.message_id}`, {
@@ -1253,6 +1255,7 @@ jobs:
             script: |
                     const pr = context.payload.pull_request;
                     const prNumber = pr.number;
+                    const prUrl = pr.html_url;
                     const closer = pr.user.login; // The person who closed it
                     // Try to get the closing comment from the PR
                     let closeComment = '';
@@ -1334,10 +1337,9 @@ jobs:
                     
                     // Post in thread
                     const closerMention = mapToDiscord(closer);
-                    let closeMessage = `🚫 **CLOSED BY** ${closerMention}\n\n`;
-                    
+                    let closeMessage = `:closed_book: [PR #${prNumber}](${prUrl}) has been closed by ${closerMention}\n`;
                     if (closeComment && closeComment.trim() !== '') {
-                        closeMessage += `> ${closeComment.replace(/\n/g, '\n> ')}\n`;
+                    closeMessage += `> ${closeComment.replace(/\n/g, '\n> ')}\n`;
                     }
                     
                     await fetch(`https://discord.com/api/v10/channels/${metadata.thread_id}/messages`, {
@@ -1377,7 +1379,7 @@ jobs:
                         let content = messageData.content;
                         
                         // Update status
-                        content = content.replace(/Status: .*/g, 'Status: Closed');
+                        content = content.replace(/\*\*Status\*\*: .*/g, `**Status**: :closed_book: Closed by ${closerMention}`);
                         
                         // Edit the message
                         await fetch(`https://discord.com/api/v10/channels/${metadata.channel_id}/messages/${metadata.message_id}`, {
@@ -1412,6 +1414,9 @@ jobs:
               script: |
                 const pr = context.payload.pull_request;
                 const prNumber = pr.number;
+                const prUrl = pr.html_url;
+                const baseBranch = pr.base.ref;
+                const author = pr.user.login;
                 const merger = pr.merged_by ? pr.merged_by.login : 'unknown';
                 const mergeCommitSha = pr.merge_commit_sha;
                 
@@ -1493,12 +1498,13 @@ jobs:
                 });
                 
                 // Build merge message
+                const authorMention = mapToDiscord(author);
                 const mergerMention = mapToDiscord(merger);
-                let mergeNotification = `🎉 **MERGED BY** ${mergerMention}\n\n`;
-                
+                let mergeNotification = `:tada: ${authorMention} - [PR #${prNumber}](${prUrl}) has been merged into \`${baseBranch}\`\n\n`;
                 if (mergeMessage) {
-                    mergeNotification += `> ${mergeMessage}\n`;
+                mergeNotification += `> ${mergeMessage}\n\n`;
                 }
+                mergeNotification += `Remember to delete associative branch if it is no longer needed!`;
                 
                 // Post in thread
                 if (metadata.thread_id) {
@@ -1541,7 +1547,7 @@ jobs:
                     let content = messageData.content;
                     
                     // Update status
-                    content = content.replace(/Status: .*/g, 'Status: Merged');
+                    content = content.replace(/\*\*Status\*\*: .*/g, `**Status**: :tada: Merged by ${mergerMention}`);
                     
                     // Edit the message
                     await fetch(`https://discord.com/api/v10/channels/${metadata.channel_id}/messages/${metadata.message_id}`, {
