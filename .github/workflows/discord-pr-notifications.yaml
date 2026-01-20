@@ -14,148 +14,33 @@ jobs:
       pull-requests: write
       issues: write
     steps:
-      - name: Handle PR Opened
-        uses: actions/github-script@v7
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build TypeScript
+        run: npm run build
+
+      - name: Run handler
         env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
           DISCORD_CHANNEL_ID: ${{ secrets.DISCORD_PR_CHANNEL_ID }}
           DISCORD_USER_MAPPING: ${{ secrets.DISCORD_USER_MAPPING }}
           DISCORD_OPERATIONS_ROLE_ID: ${{ secrets.DISCORD_OPERATIONS_ROLE_ID }}
-        with:
-          script: |
-            // Pull out the information from the PR
-            const pr = context.payload.pull_request;
-            const isDraft = pr.draft;
-            const prNumber = pr.number;
-            const prTitle = pr.title;
-            const prUrl = pr.html_url;
-            const author = pr.user.login;
-            const baseBranch = pr.base.ref;
-            const headBranch = pr.head.ref;
-            const prDescription = pr.body || '';
-            
-            // Get reviewers and their associative usernames
-            const reviewers = pr.requested_reviewers || [];
-            const reviewerLogins = reviewers.map(r => r.login);
-            
-            // Load user mapping (GitHub to Discord user ID)
-            const userMapping = process.env.DISCORD_USER_MAPPING 
-              ? JSON.parse(process.env.DISCORD_USER_MAPPING) 
-              : {};
-            
-            // Map GitHub usernames to Discord user IDs
-            const mapToDiscord = (githubUsername) => {
-              return userMapping[githubUsername] 
-                ? `<@${userMapping[githubUsername]}>` 
-                : `@${githubUsername}`;
-            };
-            
-            // Build message:
-            let message = `## [PR #${prNumber}: ${prTitle}](${prUrl})\n`;
-            message += `# \`${headBranch}\` -> \`${baseBranch}\`\n\n`;
-            message += `**Author:** ${mapToDiscord(author)}\n`;
-
-            // Add PR description if it exists
-            if (prDescription && prDescription.trim() !== '') {
-            message += `${prDescription}\n\n`;
-            }
-
-            if (reviewerLogins.length > 0) 
-            {
-                const reviewerMentions = reviewerLogins.map(mapToDiscord).join(' ');
-                message += `**Reviewers:** ${reviewerMentions}\n`;
-            } else 
-            {
-                // ANSI warning format
-                message += `\u001b[2;33mWARNING::No reviewers assigned:\u001b[0m\n`;
-                message += `PR has to be reviewed by another member before merging.\n\n`;
-            }
-
-            // Status - check if draft
-            if (isDraft) {
-            message += `**Status**: :pencil: Draft - In Progress\n`;
-            } else {
-            message += `**Status**: :eyes: Ready for Review\n`;
-            }
-            
-            // Post to Discord
-            const channelId = process.env.DISCORD_CHANNEL_ID;
-            const botToken = process.env.DISCORD_BOT_TOKEN;
-            
-            if (!botToken || !channelId) {
-              core.setFailed('DISCORD_BOT_TOKEN and DISCORD_CHANNEL_ID secrets must be set');
-              return;
-            }
-            
-            // Send message to Discord
-            const messageResponse = await fetch(`https://discord.com/api/v10/channels/${channelId}/messages`, {
-              method: 'POST',
-              headers: {
-                'Authorization': `Bot ${botToken}`,
-                'Content-Type': 'application/json',
-              },
-              body: JSON.stringify({
-                content: message,
-                flags: 4 // Suppress embeds
-              })
-            });
-            
-            if (!messageResponse.ok) {
-              const errorText = await messageResponse.text();
-              core.setFailed(`Failed to send Discord message: ${errorText}`);
-              return;
-            }
-            
-            const messageData = await messageResponse.json();
-            const discordMessageId = messageData.id;
-            
-            // Create thread
-            const threadName = `PR #${prNumber}: ${prTitle}`.substring(0, 100); // Discord thread name limit
-            const threadResponse = await fetch(`https://discord.com/api/v10/channels/${channelId}/messages/${discordMessageId}/threads`, {
-              method: 'POST',
-              headers: {
-                'Authorization': `Bot ${botToken}`,
-                'Content-Type': 'application/json',
-              },
-              body: JSON.stringify({
-                name: threadName,
-                auto_archive_duration: 1440 // 24 hours
-              })
-            });
-            
-            if (!threadResponse.ok) {
-              const errorText = await threadResponse.text();
-              core.warning(`Failed to create thread: ${errorText}`);
-            } else {
-              const threadData = await threadResponse.json();
-              const threadId = threadData.id;
-              
-              // Post thread message
-              await fetch(`https://discord.com/api/v10/channels/${threadId}/messages`, {
-                method: 'POST',
-                headers: {
-                  'Authorization': `Bot ${botToken}`,
-                  'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                  content: ':thread: Keep all conversations/dialogue about the contents of the PR in this thread **or** in the PR\'s comments'
-                })
-              });
-              
-              // Store metadata in PR comment
-              const metadata = {
-                message_id: discordMessageId,
-                thread_id: threadId,
-                channel_id: channelId
-              };
-              
-              await github.rest.issues.createComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: prNumber,
-                body: `<!-- DISCORD_BOT_METADATA\n${JSON.stringify(metadata, null, 2)}\n-->`
-              });
-            }
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          GITHUB_EVENT_PATH: ${{ github.event_path }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_REPO_OWNER: ${{ github.repository_owner }}
+        run: node dist/discord-pr-notifications/index.js
 
   handle-pr-ready-for-review:
     if: github.event_name == 'pull_request' && github.event.action == 'ready_for_review'
@@ -164,102 +49,31 @@ jobs:
       pull-requests: write
       issues: read
     steps:
-      - name: Handle PR Ready for Review
-        uses: actions/github-script@v7
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build TypeScript
+        run: npm run build
+
+      - name: Run handler
         env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
           DISCORD_USER_MAPPING: ${{ secrets.DISCORD_USER_MAPPING }}
-        with:
-          script: |
-            const pr = context.payload.pull_request;
-            const prNumber = pr.number;
-
-            // Get bot token
-            const botToken = process.env.DISCORD_BOT_TOKEN;
-            if (!botToken) {
-                core.setFailed('DISCORD_BOT_TOKEN secret must be set');
-                return;
-            }
-
-            // Find metadata comment
-            const comments = await github.rest.issues.listComments({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: prNumber
-            });
-
-            let metadata = null;
-            for (const comment of comments.data) {
-                const match = comment.body.match(/<!-- DISCORD_BOT_METADATA\n([\s\S]*?)\n-->/);
-                if (match) {
-                try {
-                    metadata = JSON.parse(match[1]);
-                    break;
-                } catch (e) {
-                    core.warning(`Failed to parse metadata: ${e.message}`);
-                }
-                }
-            }
-
-            if (!metadata || !metadata.thread_id) {
-                core.warning('No Discord thread found for this PR. Skipping.');
-                // Comment in PR
-                try {
-                  await github.rest.issues.createComment({
-                    owner: context.repo.owner,
-                    repo: context.repo.repo,
-                    issue_number: prNumber,
-                    body: '⚠️ Discord integration: Could not find Discord thread metadata for this PR. The Discord bot may not be able to update notifications.'
-                  });
-                } catch (e) {
-                  core.warning(`Failed to comment in PR: ${e.message}`);
-                }
-                return;
-            }
-
-            // Remove DRAFT marker from parent message
-            try {
-                const messageResponse = await fetch(`https://discord.com/api/v10/channels/${metadata.channel_id}/messages/${metadata.message_id}`, {
-                method: 'GET',
-                headers: {
-                    'Authorization': `Bot ${botToken}`
-                }
-                });
-
-                if (messageResponse.ok) {
-                const messageData = await messageResponse.json();
-                let content = messageData.content;
-
-                content = content.replace(/\*\*Status\*\*: :pencil: Draft - In Progress/g, '**Status**: :eyes: Ready for Review');
-
-                // Edit the message
-                await fetch(`https://discord.com/api/v10/channels/${metadata.channel_id}/messages/${metadata.message_id}`, {
-                    method: 'PATCH',
-                    headers: {
-                    'Authorization': `Bot ${botToken}`,
-                    'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({
-                    content: content,
-                    flags: 4 // Suppress embeds
-                    })
-                });
-                }
-            } catch (e) {
-                core.warning(`Failed to edit parent message: ${e.message}`);
-            }
-
-            // Post in thread
-            await fetch(`https://discord.com/api/v10/channels/${metadata.thread_id}/messages`, {
-                method: 'POST',
-                headers: {
-                'Authorization': `Bot ${botToken}`,
-                'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                content: ':eyes: This PR is now ready for review!'
-                })
-            });
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          GITHUB_EVENT_PATH: ${{ github.event_path }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_REPO_OWNER: ${{ github.repository_owner }}
+        run: node dist/discord-pr-notifications/index.js
 
   handle-reviewer-added:
     if: github.event_name == 'pull_request' && github.event.action == 'review_requested'
@@ -268,396 +82,65 @@ jobs:
       pull-requests: write
       issues: read
     steps:
-      - name: Handle Reviewer Added
-        uses: actions/github-script@v7
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build TypeScript
+        run: npm run build
+
+      - name: Run handler
         env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
           DISCORD_USER_MAPPING: ${{ secrets.DISCORD_USER_MAPPING }}
-        with:
-          script: |
-            const pr = context.payload.pull_request;
-            const prNumber = pr.number;
-            const prUrl = pr.html_url;
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          GITHUB_EVENT_PATH: ${{ github.event_path }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_REPO_OWNER: ${{ github.repository_owner }}
+        run: node dist/discord-pr-notifications/index.js
 
-            // Get ALL current reviewers from PR (not just the one that triggered the event)
-            const allReviewers = pr.requested_reviewers || [];
-            const allReviewerLogins = allReviewers.map(r => r.login);
-
-            // Get the specific reviewer that triggered this event (for thread notification)
-            const requestedReviewer = context.payload.requested_reviewer;
-            const reviewerLogin = requestedReviewer ? requestedReviewer.login : null;
-
-            // Get bot token
-            const botToken = process.env.DISCORD_BOT_TOKEN;
-            if (!botToken) {
-            core.setFailed('DISCORD_BOT_TOKEN secret must be set');
-            return;
-            }
-
-            // Load user mapping
-            const userMapping = process.env.DISCORD_USER_MAPPING 
-            ? JSON.parse(process.env.DISCORD_USER_MAPPING) 
-            : {};
-
-            const mapToDiscord = (githubUsername) => {
-            return userMapping[githubUsername] 
-                ? `<@${userMapping[githubUsername]}>` 
-                : `@${githubUsername}`;
-            };
-
-            // Find metadata comment
-            const comments = await github.rest.issues.listComments({
-            owner: context.repo.owner,
-            repo: context.repo.repo,
-            issue_number: prNumber
-            });
-
-            let metadata = null;
-            for (const comment of comments.data) {
-            const match = comment.body.match(/<!-- DISCORD_BOT_METADATA\n([\s\S]*?)\n-->/);
-            if (match) {
-                try {
-                metadata = JSON.parse(match[1]);
-                break;
-                } catch (e) {
-                core.warning(`Failed to parse metadata: ${e.message}`);
-                }
-            }
-            }
-
-            if (!metadata || !metadata.thread_id) {
-            core.warning('No Discord thread found for this PR. Skipping.');
-            // Comment in PR
-            try {
-              await github.rest.issues.createComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: prNumber,
-                body: '⚠️ Discord integration: Could not find Discord thread metadata for this PR. The Discord bot may not be able to update notifications.'
-              });
-            } catch (e) {
-              core.warning(`Failed to comment in PR: ${e.message}`);
-            }
-            return;
-            }
-
-            // Post in thread for the newly added reviewer(s)
-            if (reviewerLogin) {
-            const reviewerMention = mapToDiscord(reviewerLogin);
-            await fetch(`https://discord.com/api/v10/channels/${metadata.thread_id}/messages`, {
-                method: 'POST',
-                headers: {
-                'Authorization': `Bot ${botToken}`,
-                'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                content: `:bellhop: ${reviewerMention} - your review as been requested for [PR #${prNumber}](${prUrl})`
-                })
-            });
-            }
-
-            // Update parent message with ALL current reviewers (handles multiple additions)
-            try {
-            const messageResponse = await fetch(`https://discord.com/api/v10/channels/${metadata.channel_id}/messages/${metadata.message_id}`, {
-                method: 'GET',
-                headers: {
-                'Authorization': `Bot ${botToken}`
-                }
-            });
-            
-            if (messageResponse.ok) {
-                const messageData = await messageResponse.json();
-                let content = messageData.content;
-                
-                // Extract the parts before and after the reviewers section
-                const lines = content.split('\n');
-                let beforeReviewers = [];
-                let afterReviewers = [];
-                let reviewersLineIndex = -1;
-                
-                // Find the reviewers line or no reviewers warning
-                for (let i = 0; i < lines.length; i++) {
-                if (lines[i].includes('Reviewers:') || lines[i].includes('WARNING::No reviewers assigned')) {
-                    reviewersLineIndex = i;
-                    break;
-                }
-                }
-                
-                if (reviewersLineIndex >= 0) {
-                beforeReviewers = lines.slice(0, reviewersLineIndex);
-                afterReviewers = lines.slice(reviewersLineIndex + 1);
-                } else {
-                // If no reviewers line found, assume it should be after the Author line
-                const authorLineIndex = lines.findIndex(line => line.startsWith('**Author:**'));
-                if (authorLineIndex >= 0) {
-                    beforeReviewers = lines.slice(0, authorLineIndex + 1);
-                    afterReviewers = lines.slice(authorLineIndex + 1);
-                } else {
-                    beforeReviewers = lines;
-                    afterReviewers = [];
-                }
-                }
-                
-                // Rebuild the message with current reviewers
-                const rebuiltLines = [...beforeReviewers];
-                
-                if (allReviewerLogins.length > 0) {
-                const reviewerMentions = allReviewerLogins.map(mapToDiscord).join(' ');
-                rebuiltLines.push(`**Reviewers:** ${reviewerMentions}`);
-                } else {
-                  rebuiltLines.push(`\u001b[2;33mWARNING::No reviewers assigned:\u001b[0m\n`);
-                rebuiltLines.push(`PR has to be reviewed by another member before merging.\n\n`);
-                }
-                
-                rebuiltLines.push(...afterReviewers);
-                content = rebuiltLines.join('\n');
-                
-                // Edit the message
-                await fetch(`https://discord.com/api/v10/channels/${metadata.channel_id}/messages/${metadata.message_id}`, {
-                method: 'PATCH',
-                headers: {
-                    'Authorization': `Bot ${botToken}`,
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                    content: content,
-                    flags: 4 // Suppress embeds
-                })
-                });
-            }
-            } catch (e) {
-            core.warning(`Failed to edit parent message: ${e.message}`);
-            }
-            
   handle-reviewer-removed:
     if: github.event_name == 'pull_request' && github.event.action == 'review_request_removed'
     runs-on: ubuntu-latest
     permissions:
-        pull-requests: write
-        issues: read
+      pull-requests: write
+      issues: read
     steps:
-      - name: Handle Reviewer Removed
-        uses: actions/github-script@v7
-        env:
-            DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
-            DISCORD_USER_MAPPING: ${{ secrets.DISCORD_USER_MAPPING }}
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
         with:
-          script: |
-            const pr = context.payload.pull_request;
-            const prNumber = pr.number;
-            
-            // Get ALL current reviewers from PR (after removal)
-            const allReviewers = pr.requested_reviewers || [];
-            const allReviewerLogins = allReviewers.map(r => r.login);
+          node-version: '20'
+          cache: 'npm'
 
-            // Get the specific reviewer that was removed (for thread notification)
-            const removedReviewer = context.payload.requested_reviewer;
-            const removedReviewerLogin = removedReviewer ? removedReviewer.login : null;
+      - name: Install dependencies
+        run: npm ci
 
-            // Get bot token
-            const botToken = process.env.DISCORD_BOT_TOKEN;
-            if (!botToken) 
-            {
-                core.setFailed('DISCORD_BOT_TOKEN secret must be set');
-                return;
-            }
+      - name: Build TypeScript
+        run: npm run build
 
-            // Load user mapping
-            const userMapping = process.env.DISCORD_USER_MAPPING 
-                ? JSON.parse(process.env.DISCORD_USER_MAPPING) 
-                : {};
+      - name: Run handler
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
+          DISCORD_USER_MAPPING: ${{ secrets.DISCORD_USER_MAPPING }}
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          GITHUB_EVENT_PATH: ${{ github.event_path }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_REPO_OWNER: ${{ github.repository_owner }}
+        run: node dist/discord-pr-notifications/index.js
 
-            const mapToDiscord = (githubUsername) => 
-            {
-                return userMapping[githubUsername] 
-                ? `<@${userMapping[githubUsername]}>` 
-                : `@${githubUsername}`;
-            };
-
-            // Find metadata comment
-            const comments = await github.rest.issues.listComments(
-              {
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: prNumber
-              }
-                );
-
-            let metadata = null;
-            for (const comment of comments.data) 
-            {
-                const match = comment.body.match(/<!-- DISCORD_BOT_METADATA\n([\s\S]*?)\n-->/);
-                if (match) 
-                {
-                  try {
-                    metadata = JSON.parse(match[1]);
-                    break;
-                  } catch (e) 
-                  {
-                    core.warning(`Failed to parse metadata: ${e.message}`);
-                  }
-                }
-            }
-
-            if (!metadata || !metadata.thread_id) 
-            {
-                core.warning('No Discord thread found for this PR. Skipping.');
-                // Comment in PR
-                try {
-                  await github.rest.issues.createComment({
-                    owner: context.repo.owner,
-                    repo: context.repo.repo,
-                    issue_number: prNumber,
-                    body: '⚠️ Discord integration: Could not find Discord thread metadata for this PR. The Discord bot may not be able to update notifications.'
-                  });
-                } catch (e) {
-                  core.warning(`Failed to comment in PR: ${e.message}`);
-                }
-                return;
-            }
-
-            // Post in thread for the removed reviewer
-            if (removedReviewerLogin) 
-            {
-                const removedReviewerMention = mapToDiscord(removedReviewerLogin);
-                await fetch(`https://discord.com/api/v10/channels/${metadata.thread_id}/messages`, 
-                    {
-                      method: 'POST',
-                      headers: 
-                      {
-                        'Authorization': `Bot ${botToken}`,
-                        'Content-Type': 'application/json',
-                      },
-                      body: JSON.stringify(
-                        {
-                            content: `👋 ${removedReviewerMention} has been removed as a reviewer from this PR.`
-                        }
-                      )
-                    });
-
-                // Remove reviewer from thread
-                if (userMapping[removedReviewerLogin]) 
-                {
-                    const discordUserId = userMapping[removedReviewerLogin];
-                    try 
-                    {
-                        const removeResponse = await fetch(`https://discord.com/api/v10/channels/${metadata.thread_id}/thread-members/${discordUserId}`, 
-                        {
-                          method: 'DELETE',
-                          headers: 
-                            {
-                                'Authorization': `Bot ${botToken}`
-                            }
-                        });
-                        
-                        if (removeResponse.ok) 
-                        {
-                          core.info(`Removed ${removedReviewerLogin} from Discord thread`);
-                        } else if (removeResponse.status === 404) 
-                        {
-                          // User not in thread - that's okay
-                          core.info(`${removedReviewerLogin} was not in the thread`);
-                        } else 
-                        {
-                          const errorText = await removeResponse.text();
-                          core.warning(`Failed to remove ${removedReviewerLogin} from thread: ${errorText}`);
-                        }
-                    } catch (e) 
-                    {
-                        core.warning(`Error removing ${removedReviewerLogin} from thread: ${e.message}`);
-                    }
-                }
-            }
-
-            // Update parent message with ALL current reviewers (after removal)
-            try 
-            {
-                const messageResponse = await fetch(`https://discord.com/api/v10/channels/${metadata.channel_id}/messages/${metadata.message_id}`, 
-                {
-                  method: 'GET',
-                  headers: 
-                  {
-                    'Authorization': `Bot ${botToken}`
-                  }
-                });
-                
-                if (messageResponse.ok) 
-                {
-                    const messageData = await messageResponse.json();
-                    let content = messageData.content;
-                    
-                    // Extract the parts before and after the reviewers section
-                    const lines = content.split('\n');
-                    let beforeReviewers = [];
-                    let afterReviewers = [];
-                    let reviewersLineIndex = -1;
-                    
-                    // Find the reviewers line or no reviewers warning
-                    for (let i = 0; i < lines.length; i++) 
-                    {
-                        if (lines[i].includes('Reviewers:') || lines[i].includes('WARNING::No reviewers assigned:')) 
-                        {
-                          reviewersLineIndex = i;
-                          break;
-                        }
-                    }
-                
-                if (reviewersLineIndex >= 0) 
-                {
-                    beforeReviewers = lines.slice(0, reviewersLineIndex);
-                    afterReviewers = lines.slice(reviewersLineIndex + 1);
-                } else 
-                {
-                    // If no reviewers line found, assume it should be after the Author line
-                    const authorLineIndex = lines.findIndex(line => line.startsWith('**Author:**'));
-                    if (authorLineIndex >= 0) 
-                    {
-                        beforeReviewers = lines.slice(0, authorLineIndex + 1);
-                        afterReviewers = lines.slice(authorLineIndex + 1);
-                    } else 
-                    {
-                        beforeReviewers = lines;
-                        afterReviewers = [];
-                    }
-                }
-                
-                // Rebuild the message with current reviewers
-                const rebuiltLines = [...beforeReviewers];
-                
-                if (allReviewerLogins.length > 0) 
-                {
-                    const reviewerMentions = allReviewerLogins.map(mapToDiscord).join(' ');
-                    rebuiltLines.push(`**Reviewers:** ${reviewerMentions}`);
-                } else 
-                 {
-                      rebuiltLines.push(`\u001b[2;33mWARNING::No reviewers assigned:\u001b[0m\n`);
-                      rebuiltLines.push(`PR has to be reviewed by another member before merging.\n\n`);
-                }
-                
-                rebuiltLines.push(...afterReviewers);
-                content = rebuiltLines.join('\n');
-                
-                // Edit the message
-                await fetch(`https://discord.com/api/v10/channels/${metadata.channel_id}/messages/${metadata.message_id}`, 
-                {
-                    method: 'PATCH',
-                    headers: 
-                      {
-                        'Authorization': `Bot ${botToken}`,
-                        'Content-Type': 'application/json',
-                      },
-                    body: JSON.stringify(
-                    {
-                        content: content,
-                        flags: 4 // Suppress embeds
-                    })
-                });
-                }
-            } catch (e) 
-            {
-                core.warning(`Failed to edit parent message: ${e.message}`);
-            } 
-                
   handle-pr-review:
     if: github.event_name == 'pull_request_review'
     runs-on: ubuntu-latest
@@ -665,454 +148,66 @@ jobs:
       pull-requests: write
       issues: read
     steps:
-      - name: Handle PR Review
-        uses: actions/github-script@v7
-        env:
-            DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
-            DISCORD_USER_MAPPING: ${{ secrets.DISCORD_USER_MAPPING }}
-            DISCORD_OPERATIONS_ROLE_ID: ${{ secrets.DISCORD_OPERATIONS_ROLE_ID }}
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
         with:
-            script: |
-                const pr = context.payload.pull_request; 
-                const review = context.payload.review;
-                const prNumber = pr.number;
-                const baseBranch = pr.base.ref;
-                const author = pr.user.login;
-                const reviewer = review.user.login;
-                const reviewState = review.state; // 'approved', 'changes_requested', or 'commented'
-                
-                // Get the review body - try from payload first, then fetch from API if needed
-                let reviewBody = review.body || '';
+          node-version: '20'
+          cache: 'npm'
 
-                // If review body is empty, try fetching the full review details
-                if (!reviewBody || reviewBody.trim() === '') 
-                {
-                    try 
-                    {
-                        const fullReview = await github.rest.pulls.getReview({
-                        owner: context.repo.owner,
-                        repo: context.repo.repo,
-                        pull_number: prNumber,
-                        review_id: review.id
-                        });
-                        reviewBody = fullReview.data.body || '';
-                    } catch (e) 
-                    {
-                        core.warning(`Could not fetch review details: ${e.message}`);
-                        reviewBody = '';
-                    }
-                }
-                
-                // Skip if it's just a comment (not approval or changes requested)
-                if (reviewState === 'commented') {
-                    core.info('Review is just a comment, skipping.');
-                    return;
-                }
-                
-                // Get bot token
-                const botToken = process.env.DISCORD_BOT_TOKEN;
-                if (!botToken) {
-                    core.setFailed('DISCORD_BOT_TOKEN secret must be set');
-                    return;
-                }
-                
-                // Load user mapping
-                const userMapping = process.env.DISCORD_USER_MAPPING 
-                    ? JSON.parse(process.env.DISCORD_USER_MAPPING) 
-                    : {};
-                
-                const mapToDiscord = (githubUsername) => {
-                    return userMapping[githubUsername] 
-                    ? `<@${userMapping[githubUsername]}>` 
-                    : `@${githubUsername}`;
-                };
-                
-                // Find metadata comment
-                const comments = await github.rest.issues.listComments({
-                    owner: context.repo.owner,
-                    repo: context.repo.repo,
-                    issue_number: prNumber
-                });
-                
-                let metadata = null;
-                for (const comment of comments.data) {
-                    const match = comment.body.match(/<!-- DISCORD_BOT_METADATA\n([\s\S]*?)\n-->/);
-                    if (match) {
-                    try {
-                        metadata = JSON.parse(match[1]);
-                        break;
-                    } catch (e) {
-                        core.warning(`Failed to parse metadata: ${e.message}`);
-                    }
-                    }
-                }
-                
-                if (!metadata) {
-                    core.warning('No Discord metadata found for this PR. Skipping.');
-                    // Comment in PR
-                    try {
-                      await github.rest.issues.createComment({
-                        owner: context.repo.owner,
-                        repo: context.repo.repo,
-                        issue_number: prNumber,
-                        body: '⚠️ Discord integration: Could not find Discord metadata for this PR. The Discord bot may not be able to update notifications.'
-                      });
-                    } catch (e) {
-                      core.warning(`Failed to comment in PR: ${e.message}`);
-                    }
-                    return;
-                }
-                
-                // Determine emoji and status text based on review state
-                let emoji = '';
-                let statusText = '';
-                if (reviewState === 'approved') {
-                    emoji = '✅';
-                    statusText = 'APPROVED';
-                } else if (reviewState === 'changes_requested') {
-                    emoji = '❌';
-                    statusText = 'CHANGES REQUESTED';
-                }
-                
-                                // Remove existing reactions before adding new one (mutually exclusive)
-                if (emoji) {
-                    // Remove opposite reaction if present
-                    if (reviewState === 'approved') {
-                        // Remove ❌ if present
-                        try {
-                            await fetch(`https://discord.com/api/v10/channels/${metadata.channel_id}/messages/${metadata.message_id}/reactions/❌/@me`, {
-                                method: 'DELETE',
-                                headers: {
-                                    'Authorization': `Bot ${botToken}`
-                                }
-                            });
-                        } catch (e) {
-                            // Reaction might not exist, that's okay
-                        }
-                    } else if (reviewState === 'changes_requested') {
-                        // Remove ✅ if present
-                        try {
-                            await fetch(`https://discord.com/api/v10/channels/${metadata.channel_id}/messages/${metadata.message_id}/reactions/✅/@me`, {
-                                method: 'DELETE',
-                                headers: {
-                                    'Authorization': `Bot ${botToken}`
-                                }
-                            });
-                        } catch (e) {
-                            // Reaction might not exist, that's okay
-                        }
-                    }
-                    
-                    // Add new reaction
-                    await fetch(`https://discord.com/api/v10/channels/${metadata.channel_id}/messages/${metadata.message_id}/reactions/${emoji}/@me`, {
-                        method: 'PUT',
-                        headers: {
-                            'Authorization': `Bot ${botToken}`
-                        }
-                    });
-                }
-                
-                // Build review message for thread
-                const reviewerMention = mapToDiscord(reviewer);
-                const authorMention = mapToDiscord(author);
-                
-                // Debug: log review body
-                core.info(`Review body from payload: ${review.body || '(empty)'}`);
-                core.info(`Review body after fetch: ${reviewBody || '(empty)'}`);
-                
-                if (reviewState === 'approved') 
-                {
-                    reviewMessage = `:white_check_mark: ${authorMention} - ${reviewerMention} has approved the PR\n`;
-                    if (reviewBody && reviewBody.trim() !== '') {
-                    reviewMessage += `> ${reviewBody.replace(/\n/g, '\n> ')}\n\n`;
-                    }
-                    reviewMessage += `Feel free to merge if all other conditions have been met`;
-                    
-                } else if (reviewState === 'changes_requested') 
-                {
-                    reviewMessage = `:tools: ${authorMention} - changes have been requested by ${reviewerMention}.\n`;
-                    if (reviewBody && reviewBody.trim() !== '') {
-                    reviewMessage += `> ${reviewBody.replace(/\n/g, '\n> ')}\n\n`;
-                    }
-                    reviewMessage += `Please resolve them and re-request a review.`;
-                }
-                
-                // Post in thread
-                if (metadata.thread_id) {
-                    await fetch(`https://discord.com/api/v10/channels/${metadata.thread_id}/messages`, {
-                    method: 'POST',
-                    headers: {
-                        'Authorization': `Bot ${botToken}`,
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({
-                        content: reviewMessage
-                    })
-                    });
-                    
-                    // Lock thread if approved
-                    if (reviewState === 'approved') {
-                        await fetch(`https://discord.com/api/v10/channels/${metadata.thread_id}`, {
-                            method: 'PATCH',
-                            headers: {
-                                'Authorization': `Bot ${botToken}`,
-                                'Content-Type': 'application/json',
-                            },
-                            body: JSON.stringify({
-                                locked: true
-                            })
-                        });
-                    }
-                }
-                
-                // Update parent message with review status
-                try {
-                    const messageResponse = await fetch(`https://discord.com/api/v10/channels/${metadata.channel_id}/messages/${metadata.message_id}`, {
-                    method: 'GET',
-                    headers: {
-                        'Authorization': `Bot ${botToken}`
-                    }
-                    });
-                    
-                    if (messageResponse.ok) {
-                    const messageData = await messageResponse.json();
-                    let content = messageData.content;
-                    
-                    // Process lines and update status - remove approval/changes lines, only keep Status
-                    const lines = content.split('\n');
-                    let newLines = [];
-                    let statusLineFound = false;
+      - name: Install dependencies
+        run: npm ci
 
-                    for (let i = 0; i < lines.length; i++) {
-                      const line = lines[i];
-                      
-                      // Update status line if found
-                      if (line.startsWith('**Status**:')) {
-                        if (reviewState === 'approved') {
-                        newLines.push(`**Status**: :white_check_mark: Approved by ${reviewerMention}`);
-                        } else if (reviewState === 'changes_requested') {
-                        newLines.push(`**Status**: :tools: Changes Requested by ${reviewerMention}`);
-                        } else {
-                          newLines.push(line); // Keep original if unknown state
-                        }
-                        statusLineFound = true;
-                      } else {
-                        newLines.push(line);
-                      }
-                    }
+      - name: Build TypeScript
+        run: npm run build
 
-                    // If no status line was found, add it after Reviewers
-                    if (!statusLineFound) {
-                      const reviewersIndex = newLines.findIndex(line => 
-                        line.includes('Reviewers:') || line.includes('WARNING::No reviewers assigned')
-                      );
-                      if (reviewersIndex >= 0) {
-                        newLines.splice(reviewersIndex + 1, 0, 
-                            reviewState === 'approved' ? `**Status**: :white_check_mark: Approved by ${reviewerMention}` : `**Status**: :tools: Changes Requested by ${reviewerMention}`
-                        );
-                      } else {
-                        newLines.push(  reviewState === 'approved' ? `**Status**: :white_check_mark: Approved by ${reviewerMention}` : `**Status**: :tools: Changes Requested by ${reviewerMention}`);
-                      }
-                    }
-
-                    content = newLines.join('\n');
-                    
-                    // Edit the message
-                    await fetch(`https://discord.com/api/v10/channels/${metadata.channel_id}/messages/${metadata.message_id}`, {
-                        method: 'PATCH',
-                        headers: {
-                        'Authorization': `Bot ${botToken}`,
-                        'Content-Type': 'application/json',
-                        },
-                        body: JSON.stringify({
-                        content: content,
-                        flags: 4 // Suppress embeds
-                        })
-                    });
-                    }
-                } catch (e) {
-                    core.warning(`Failed to edit parent message: ${e.message}`);
-                }
+      - name: Run handler
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
+          DISCORD_USER_MAPPING: ${{ secrets.DISCORD_USER_MAPPING }}
+          DISCORD_OPERATIONS_ROLE_ID: ${{ secrets.DISCORD_OPERATIONS_ROLE_ID }}
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          GITHUB_EVENT_PATH: ${{ github.event_path }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_REPO_OWNER: ${{ github.repository_owner }}
+        run: node dist/discord-pr-notifications/index.js
 
   handle-pr-synchronize:
     if: github.event_name == 'pull_request' && github.event.action == 'synchronize'
     runs-on: ubuntu-latest
     permissions:
-        pull-requests: write
-        issues: read
+      pull-requests: write
+      issues: read
     steps:
-      - name: Handle PR Synchronize
-        uses: actions/github-script@v7
-        env:
-            DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
-            DISCORD_USER_MAPPING: ${{ secrets.DISCORD_USER_MAPPING }}
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
         with:
-          script: |
-            const pr = context.payload.pull_request;
-            const prNumber = pr.number;
+          node-version: '20'
+          cache: 'npm'
 
-            // Get bot token
-            const botToken = process.env.DISCORD_BOT_TOKEN;
-            if (!botToken) {
-                core.setFailed('DISCORD_BOT_TOKEN secret must be set');
-                return;
-            }
+      - name: Install dependencies
+        run: npm ci
 
-            // Load user mapping
-            const userMapping = process.env.DISCORD_USER_MAPPING 
-                ? JSON.parse(process.env.DISCORD_USER_MAPPING) 
-                : {};
+      - name: Build TypeScript
+        run: npm run build
 
-            const mapToDiscord = (githubUsername) => {
-                return userMapping[githubUsername] 
-                ? `<@${userMapping[githubUsername]}>` 
-                : `@${githubUsername}`;
-            };
+      - name: Run handler
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
+          DISCORD_USER_MAPPING: ${{ secrets.DISCORD_USER_MAPPING }}
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          GITHUB_EVENT_PATH: ${{ github.event_path }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_REPO_OWNER: ${{ github.repository_owner }}
+        run: node dist/discord-pr-notifications/index.js
 
-            // Find metadata comment
-            const comments = await github.rest.issues.listComments({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: prNumber
-            });
-
-            let metadata = null;
-            for (const comment of comments.data) {
-                const match = comment.body.match(/<!-- DISCORD_BOT_METADATA\n([\s\S]*?)\n-->/);
-                if (match) {
-                try {
-                    metadata = JSON.parse(match[1]);
-                    break;
-                } catch (e) {
-                    core.warning(`Failed to parse metadata: ${e.message}`);
-                }
-                }
-            }
-
-            if (!metadata || !metadata.thread_id) {
-                core.warning('No Discord thread found for this PR. Skipping.');
-                // Comment in PR
-                try {
-                  await github.rest.issues.createComment({
-                    owner: context.repo.owner,
-                    repo: context.repo.repo,
-                    issue_number: prNumber,
-                    body: '⚠️ Discord integration: Could not find Discord thread metadata for this PR. The Discord bot may not be able to update notifications.'
-                  });
-                } catch (e) {
-                  core.warning(`Failed to comment in PR: ${e.message}`);
-                }
-                return;
-            }
-
-            // Check if PR was previously approved by reading Discord message
-            try {
-                const messageResponse = await fetch(`https://discord.com/api/v10/channels/${metadata.channel_id}/messages/${metadata.message_id}`, {
-                method: 'GET',
-                headers: {
-                    'Authorization': `Bot ${botToken}`
-                }
-                });
-
-                if (!messageResponse.ok) {
-                core.warning('Could not fetch Discord message. Skipping.');
-                return;
-                }
-
-                const messageData = await messageResponse.json();
-                const content = messageData.content;
-
-                // Check if status is "Approved"
-                const isApproved = content.includes('**Status**: :white_check_mark: Approved');
-
-                if (isApproved) {
-                // Get current reviewers
-                const allReviewers = pr.requested_reviewers || [];
-                const allReviewerLogins = allReviewers.map(r => r.login);
-
-                // Unlock thread if it was locked
-                try {
-                    await fetch(`https://discord.com/api/v10/channels/${metadata.thread_id}`, {
-                    method: 'PATCH',
-                    headers: {
-                        'Authorization': `Bot ${botToken}`,
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({
-                        locked: false
-                    })
-                    });
-                } catch (e) {
-                    core.warning(`Failed to unlock thread: ${e.message}`);
-                }
-
-                // Update status to "In Review"
-                const lines = content.split('\n');
-                const newLines = lines.map(line => {
-                    if (line.startsWith('**Status**:')) {
-                    return '**Status**: :eyes: Ready for Review';
-                    }
-                    return line;
-                });
-
-                const updatedContent = newLines.join('\n');
-
-                await fetch(`https://discord.com/api/v10/channels/${metadata.channel_id}/messages/${metadata.message_id}`, {
-                    method: 'PATCH',
-                    headers: {
-                    'Authorization': `Bot ${botToken}`,
-                    'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({
-                    content: updatedContent,
-                    flags: 4 // Suppress embeds
-                    })
-                });
-
-                // Post in thread to notify reviewers
-                if (allReviewerLogins.length > 0) {
-                    const reviewerMentions = allReviewerLogins.map(mapToDiscord).join(' ');
-                    await fetch(`https://discord.com/api/v10/channels/${metadata.thread_id}/messages`, {
-                    method: 'POST',
-                    headers: {
-                        'Authorization': `Bot ${botToken}`,
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({
-                        content: `⚠️ New commits have been pushed to this PR. ${reviewerMentions} Please review the updates.`
-                    })
-                    });
-                } else {
-                    await fetch(`https://discord.com/api/v10/channels/${metadata.thread_id}/messages`, {
-                    method: 'POST',
-                    headers: {
-                        'Authorization': `Bot ${botToken}`,
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({
-                        content: '⚠️ New commits have been pushed to this PR. Please add reviewers if needed.'
-                    })
-                    });
-                }
-
-                // Re-request reviews
-                if (allReviewerLogins.length > 0) {
-                    try {
-                    await github.rest.pulls.requestReviewers({
-                        owner: context.repo.owner,
-                        repo: context.repo.repo,
-                        pull_number: prNumber,
-                        reviewers: allReviewerLogins
-                    });
-                    } catch (e) {
-                    core.warning(`Failed to re-request reviews: ${e.message}`);
-                    }
-                }
-                }
-            } catch (e) {
-                core.warning(`Failed to handle PR synchronize: ${e.message}`);
-            }
-                
   handle-review-dismissed:
     if: github.event_name == 'pull_request_review' && github.event.action == 'dismissed'
     runs-on: ubuntu-latest
@@ -1120,448 +215,95 @@ jobs:
       pull-requests: write
       issues: read
     steps:
-      - name: Handle Review Dismissed
-        uses: actions/github-script@v7
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build TypeScript
+        run: npm run build
+
+      - name: Run handler
         env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
           DISCORD_USER_MAPPING: ${{ secrets.DISCORD_USER_MAPPING }}
-        with:
-            script: |
-                const pr = context.payload.pull_request;
-                const review = context.payload.review;
-                const prNumber = pr.number;
-                const reviewer = review.user.login;
-                const reviewState = review.state; // The original state before dismissal
-                
-                // Only notify if it was a changes_requested review
-                if (reviewState !== 'changes_requested') {
-                    core.info('Dismissed review was not changes_requested, skipping.');
-                    return;
-                }
-                
-                // Get bot token
-                const botToken = process.env.DISCORD_BOT_TOKEN;
-                if (!botToken) {
-                    core.setFailed('DISCORD_BOT_TOKEN secret must be set');
-                    return;
-                }
-                
-                // Load user mapping
-                const userMapping = process.env.DISCORD_USER_MAPPING 
-                    ? JSON.parse(process.env.DISCORD_USER_MAPPING) 
-                    : {};
-                
-                const mapToDiscord = (githubUsername) => {
-                    return userMapping[githubUsername] 
-                    ? `<@${userMapping[githubUsername]}>` 
-                    : `@${githubUsername}`;
-                };
-                
-                // Find metadata comment
-                const comments = await github.rest.issues.listComments({
-                    owner: context.repo.owner,
-                    repo: context.repo.repo,
-                    issue_number: prNumber
-                });
-                
-                let metadata = null;
-                for (const comment of comments.data) {
-                    const match = comment.body.match(/<!-- DISCORD_BOT_METADATA\n([\s\S]*?)\n-->/);
-                    if (match) {
-                    try {
-                        metadata = JSON.parse(match[1]);
-                        break;
-                    } catch (e) {
-                        core.warning(`Failed to parse metadata: ${e.message}`);
-                    }
-                    }
-                }
-                
-                if (!metadata || !metadata.thread_id) {
-                    core.warning('No Discord thread found for this PR. Skipping.');
-                // Comment in PR
-                try {
-                  await github.rest.issues.createComment({
-                    owner: context.repo.owner,
-                    repo: context.repo.repo,
-                    issue_number: prNumber,
-                    body: '⚠️ Discord integration: Could not find Discord thread metadata for this PR. The Discord bot may not be able to update notifications.'
-                  });
-                } catch (e) {
-                  core.warning(`Failed to comment in PR: ${e.message}`);
-                }
-                return;
-                }
-                
-                // Post in thread to notify the reviewer
-                const reviewerMention = mapToDiscord(reviewer);
-                await fetch(`https://discord.com/api/v10/channels/${metadata.thread_id}/messages`, {
-                    method: 'POST',
-                    headers: {
-                    'Authorization': `Bot ${botToken}`,
-                    'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({
-                    content: `✅ ${reviewerMention} The requested changes have been addressed. Please review the updates.`
-                    })
-                });
-                
-                // Update parent message status to "In Review"
-                try {
-                  const messageResponse = await fetch(`https://discord.com/api/v10/channels/${metadata.channel_id}/messages/${metadata.message_id}`, {
-                    method: 'GET',
-                    headers: {
-                      'Authorization': `Bot ${botToken}`
-                    }
-                  });
-                  
-                  if (messageResponse.ok) {
-                    const messageData = await messageResponse.json();
-                    let content = messageData.content;
-                    
-                    // Update status from "Needs Changes" to "In Review"
-                    content = content.replace(/\*\*Status\*\*: .*/g, '**Status**: :eyes: Ready for Review');
-                    
-                    // Edit the message
-                    await fetch(`https://discord.com/api/v10/channels/${metadata.channel_id}/messages/${metadata.message_id}`, {
-                      method: 'PATCH',
-                      headers: {
-                        'Authorization': `Bot ${botToken}`,
-                        'Content-Type': 'application/json',
-                      },
-                      body: JSON.stringify({
-                        content: content,
-                        flags: 4 // Suppress embeds
-                      })
-                    });
-                  }
-                } catch (e) {
-                  core.warning(`Failed to edit parent message: ${e.message}`);
-                }
-                
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          GITHUB_EVENT_PATH: ${{ github.event_path }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_REPO_OWNER: ${{ github.repository_owner }}
+        run: node dist/discord-pr-notifications/index.js
+
   handle-pr-closed:
-      if: github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged == false
-      runs-on: ubuntu-latest
-      permissions:
-            pull-requests: write
-            issues: read
-      steps:
-      - name: Handle PR Closed
-        uses: actions/github-script@v7
-        env:
-            DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
-            DISCORD_USER_MAPPING: ${{ secrets.DISCORD_USER_MAPPING }}
+    if: github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged == false
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+      issues: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
         with:
-            script: |
-                    const pr = context.payload.pull_request;
-                    const prNumber = pr.number;
-                    const prUrl = pr.html_url;
-                    const closer = pr.user.login; // The person who closed it
-                    // Try to get the closing comment from the PR
-                    let closeComment = '';
-                    try {
-                    const issueComments = await github.rest.issues.listComments({
-                        owner: context.repo.owner,
-                        repo: context.repo.repo,
-                        issue_number: prNumber
-                    });
-                    // Get the most recent comment that might be the closing comment
-                    // Note: GitHub doesn't always provide a specific "closing comment"
-                    // This is a best-effort approach
-                    if (issueComments.data.length > 0) {
-                        const lastComment = issueComments.data[issueComments.data.length - 1];
-                        // Only use if it's recent (within last minute) and from the closer
-                        const commentTime = new Date(lastComment.created_at);
-                        const now = new Date();
-                        if ((now - commentTime) < 60000 && lastComment.user.login === closer) {
-                        closeComment = lastComment.body || '';
-                        }
-                    }
-                    } catch (e) {
-                    core.warning(`Could not fetch closing comment: ${e.message}`);
-                    }
-                    
-                    // Get bot token
-                    const botToken = process.env.DISCORD_BOT_TOKEN;
-                    if (!botToken) {
-                        core.setFailed('DISCORD_BOT_TOKEN secret must be set');
-                        return;
-                    }
-                    
-                    // Load user mapping
-                    const userMapping = process.env.DISCORD_USER_MAPPING 
-                        ? JSON.parse(process.env.DISCORD_USER_MAPPING) 
-                        : {};
-                    
-                    const mapToDiscord = (githubUsername) => {
-                        return userMapping[githubUsername] 
-                        ? `<@${userMapping[githubUsername]}>` 
-                        : `@${githubUsername}`;
-                    };
-                    
-                    // Find metadata comment
-                    const comments = await github.rest.issues.listComments({
-                        owner: context.repo.owner,
-                        repo: context.repo.repo,
-                        issue_number: prNumber
-                    });
-                    
-                    let metadata = null;
-                    for (const comment of comments.data) {
-                        const match = comment.body.match(/<!-- DISCORD_BOT_METADATA\n([\s\S]*?)\n-->/);
-                        if (match) {
-                        try {
-                            metadata = JSON.parse(match[1]);
-                            break;
-                        } catch (e) {
-                            core.warning(`Failed to parse metadata: ${e.message}`);
-                        }
-                        }
-                    }
-                    
-                    if (!metadata || !metadata.thread_id) {
-                        core.warning('No Discord thread found for this PR. Skipping.');
-                        // Comment in PR
-                        try {
-                        await github.rest.issues.createComment({
-                            owner: context.repo.owner,
-                            repo: context.repo.repo,
-                            issue_number: prNumber,
-                            body: '⚠️ Discord integration: Could not find Discord thread metadata for this PR. The Discord bot may not be able to update notifications.'
-                        });
-                        } catch (e) {
-                        core.warning(`Failed to comment in PR: ${e.message}`);
-                        }
-                        return;
-                    }
-                    
-                    // Post in thread
-                    const closerMention = mapToDiscord(closer);
-                    let closeMessage = `:closed_book: [PR #${prNumber}](${prUrl}) has been closed by ${closerMention}\n`;
-                    if (closeComment && closeComment.trim() !== '') {
-                    closeMessage += `> ${closeComment.replace(/\n/g, '\n> ')}\n`;
-                    }
-                    
-                    await fetch(`https://discord.com/api/v10/channels/${metadata.thread_id}/messages`, {
-                        method: 'POST',
-                        headers: {
-                        'Authorization': `Bot ${botToken}`,
-                        'Content-Type': 'application/json',
-                        },
-                        body: JSON.stringify({
-                        content: closeMessage
-                        })
-                    });
-                    
-                    // Lock the thread
-                    await fetch(`https://discord.com/api/v10/channels/${metadata.thread_id}`, {
-                        method: 'PATCH',
-                        headers: {
-                            'Authorization': `Bot ${botToken}`,
-                            'Content-Type': 'application/json',
-                        },
-                        body: JSON.stringify({
-                            locked: true
-                        })
-                    });
-                    
-                    // Update parent message status
-                    try {
-                        const messageResponse = await fetch(`https://discord.com/api/v10/channels/${metadata.channel_id}/messages/${metadata.message_id}`, {
-                        method: 'GET',
-                        headers: {
-                            'Authorization': `Bot ${botToken}`
-                        }
-                        });
-                        
-                        if (messageResponse.ok) {
-                        const messageData = await messageResponse.json();
-                        let content = messageData.content;
-                        
-                        // Update status
-                        content = content.replace(/\*\*Status\*\*: .*/g, `**Status**: :closed_book: Closed by ${closerMention}`);
-                        
-                        // Edit the message
-                        await fetch(`https://discord.com/api/v10/channels/${metadata.channel_id}/messages/${metadata.message_id}`, {
-                            method: 'PATCH',
-                            headers: {
-                            'Authorization': `Bot ${botToken}`,
-                            'Content-Type': 'application/json',
-                            },
-                            body: JSON.stringify({
-                            content: content,
-                            flags: 4 // Suppress embeds
-                            })
-                        });
-                        }
-                    } catch (e) {
-                        core.warning(`Failed to edit parent message: ${e.message}`);
-                    }
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build TypeScript
+        run: npm run build
+
+      - name: Run handler
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
+          DISCORD_USER_MAPPING: ${{ secrets.DISCORD_USER_MAPPING }}
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          GITHUB_EVENT_PATH: ${{ github.event_path }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_REPO_OWNER: ${{ github.repository_owner }}
+        run: node dist/discord-pr-notifications/index.js
+
   handle-pr-merged:
-      if: github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged == true
-      runs-on: ubuntu-latest
-      permissions:
-            pull-requests: write
-            issues: read
-            contents: read
-      steps:
-          - name: Handle PR Merged
-            uses: actions/github-script@v7
-            env:
-                DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
-                DISCORD_USER_MAPPING: ${{ secrets.DISCORD_USER_MAPPING }}
-            with:
-              script: |
-                const pr = context.payload.pull_request;
-                const prNumber = pr.number;
-                const prUrl = pr.html_url;
-                const baseBranch = pr.base.ref;
-                const author = pr.user.login;
-                const merger = pr.merged_by ? pr.merged_by.login : 'unknown';
-                const mergeCommitSha = pr.merge_commit_sha;
-                
-                // Get bot token
-                const botToken = process.env.DISCORD_BOT_TOKEN;
-                if (!botToken) {
-                    core.setFailed('DISCORD_BOT_TOKEN secret must be set');
-                    return;
-                }
-                
-                // Load user mapping
-                const userMapping = process.env.DISCORD_USER_MAPPING 
-                    ? JSON.parse(process.env.DISCORD_USER_MAPPING) 
-                    : {};
-                
-                const mapToDiscord = (githubUsername) => {
-                    return userMapping[githubUsername] 
-                    ? `<@${userMapping[githubUsername]}>` 
-                    : `@${githubUsername}`;
-                };
-                
-                // Get merge commit message
-                let mergeMessage = '';
-                if (mergeCommitSha) {
-                    try {
-                    const commit = await github.rest.repos.getCommit({
-                        owner: context.repo.owner,
-                        repo: context.repo.repo,
-                        ref: mergeCommitSha
-                    });
-                    mergeMessage = commit.data.commit.message.split('\n')[0];
-                    } catch (e) {
-                    core.warning(`Could not fetch merge commit: ${e.message}`);
-                    }
-                }
-                
-                // Find metadata comment
-                const comments = await github.rest.issues.listComments({
-                    owner: context.repo.owner,
-                    repo: context.repo.repo,
-                    issue_number: prNumber
-                });
-                
-                let metadata = null;
-                for (const comment of comments.data) {
-                    const match = comment.body.match(/<!-- DISCORD_BOT_METADATA\n([\s\S]*?)\n-->/);
-                    if (match) {
-                    try {
-                        metadata = JSON.parse(match[1]);
-                        break;
-                    } catch (e) {
-                        core.warning(`Failed to parse metadata: ${e.message}`);
-                    }
-                    }
-                }
-                
-                if (!metadata) {
-                    core.warning('No Discord metadata found for this PR. Skipping.');
-                    // Comment in PR
-                    try {
-                    await github.rest.issues.createComment({
-                        owner: context.repo.owner,
-                        repo: context.repo.repo,
-                        issue_number: prNumber,
-                        body: '⚠️ Discord integration: Could not find Discord thread metadata for this PR. The Discord bot may not be able to update notifications.'
-                    });
-                    } catch (e) {
-                    core.warning(`Failed to comment in PR: ${e.message}`);
-                    }
-                    return;
-                }
-                
-                // Add celebration emoji reaction
-                await fetch(`https://discord.com/api/v10/channels/${metadata.channel_id}/messages/${metadata.message_id}/reactions/🎉/@me`, {
-                    method: 'PUT',
-                    headers: {
-                    'Authorization': `Bot ${botToken}`
-                    }
-                });
-                
-                // Build merge message
-                const authorMention = mapToDiscord(author);
-                const mergerMention = mapToDiscord(merger);
-                let mergeNotification = `:tada: ${authorMention} - [PR #${prNumber}](${prUrl}) has been merged into \`${baseBranch}\`\n\n`;
-                if (mergeMessage) {
-                mergeNotification += `> ${mergeMessage}\n\n`;
-                }
-                mergeNotification += `Remember to delete associative branch if it is no longer needed!`;
-                
-                // Post in thread
-                if (metadata.thread_id) {
-                    await fetch(`https://discord.com/api/v10/channels/${metadata.thread_id}/messages`, {
-                    method: 'POST',
-                    headers: {
-                        'Authorization': `Bot ${botToken}`,
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({
-                        content: mergeNotification
-                    })
-                    });
-                    
-                     // Archive and lock the thread
-                    await fetch(`https://discord.com/api/v10/channels/${metadata.thread_id}`, {
-                    method: 'PATCH',
-                    headers: {
-                        'Authorization': `Bot ${botToken}`,
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({
-                        archived: true,
-                        locked: true
-                    })
-                    });
-                }
-                
-                // Update parent message status
-                try {
-                    const messageResponse = await fetch(`https://discord.com/api/v10/channels/${metadata.channel_id}/messages/${metadata.message_id}`, {
-                    method: 'GET',
-                    headers: {
-                        'Authorization': `Bot ${botToken}`
-                    }
-                    });
-                    
-                    if (messageResponse.ok) {
-                    const messageData = await messageResponse.json();
-                    let content = messageData.content;
-                    
-                    // Update status
-                    content = content.replace(/\*\*Status\*\*: .*/g, `**Status**: :tada: Merged by ${mergerMention}`);
-                    
-                    // Edit the message
-                    await fetch(`https://discord.com/api/v10/channels/${metadata.channel_id}/messages/${metadata.message_id}`, {
-                        method: 'PATCH',
-                        headers: {
-                        'Authorization': `Bot ${botToken}`,
-                        'Content-Type': 'application/json',
-                        },
-                        body: JSON.stringify({
-                        content: content,
-                        flags: 4 // Suppress embeds
-                        })
-                    });
-                    }
-                } catch (e) {
-                    core.warning(`Failed to edit parent message: ${e.message}`);
-                }
+    if: github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+      issues: read
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build TypeScript
+        run: npm run build
+
+      - name: Run handler
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
+          DISCORD_USER_MAPPING: ${{ secrets.DISCORD_USER_MAPPING }}
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          GITHUB_EVENT_PATH: ${{ github.event_path }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_REPO_OWNER: ${{ github.repository_owner }}
+        run: node dist/discord-pr-notifications/index.js

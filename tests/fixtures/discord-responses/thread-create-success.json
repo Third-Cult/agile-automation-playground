@@ -1,0 +1,9 @@
+{
+  "id": "thread-123",
+  "name": "PR #123: Test PR Title",
+  "type": 11,
+  "guild_id": "guild-123",
+  "parent_id": "123456",
+  "owner_id": "bot-123",
+  "last_message_id": "msg-123"
+}

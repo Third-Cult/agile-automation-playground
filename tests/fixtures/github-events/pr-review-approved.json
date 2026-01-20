@@ -1,0 +1,37 @@
+{
+  "action": "submitted",
+  "pull_request": {
+    "number": 123,
+    "title": "Test PR Title",
+    "html_url": "https://github.com/test-owner/test-repo/pull/123",
+    "body": "This is a test PR description",
+    "draft": false,
+    "state": "open",
+    "user": {
+      "login": "test-author",
+      "id": 1
+    },
+    "base": {
+      "ref": "main"
+    },
+    "head": {
+      "ref": "feature-branch"
+    },
+    "requested_reviewers": [
+      {
+        "login": "reviewer1",
+        "id": 2,
+        "type": "User"
+      }
+    ]
+  },
+  "review": {
+    "id": 456,
+    "user": {
+      "login": "reviewer1",
+      "id": 2
+    },
+    "state": "approved",
+    "body": "Looks good to me!"
+  }
+}
