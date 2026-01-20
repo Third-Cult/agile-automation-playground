@@ -89,7 +89,7 @@ Before testing, ensure:
 **Expected Results:**
 - [ ] Parent message DRAFT marker removed
 - [ ] Thread message: "✅ This PR is now ready for review!"
-- [ ] Status remains: In Review
+- [X] Status remains: In Review
 
 **Note:** This handler may not exist yet - verify if it's implemented.
 
@@ -104,9 +104,9 @@ Before testing, ensure:
 3. Check Discord
 
 **Expected Results:**
-- [ ] Thread message: "@reviewer You've been added as a reviewer to this PR!"
-- [ ] Parent message updated: "Reviewers:" line now includes the reviewer
-- [ ] "⚠️ No reviewers assigned" warning removed
+- [X] Thread message: "@reviewer You've been added as a reviewer to this PR!"
+- [X] Parent message updated: "Reviewers:" line now includes the reviewer
+- [X] "⚠️ No reviewers assigned" warning removed
 
 ---
 
@@ -118,10 +118,10 @@ Before testing, ensure:
 4. Check Discord after each addition
 
 **Expected Results:**
-- [ ] Each addition posts a thread message
-- [ ] Parent message Reviewers line updates correctly
-- [ ] All reviewers listed in parent message
-- [ ] No duplicate reviewers
+- [X] Each addition posts a thread message
+- [X] Parent message Reviewers line updates correctly
+- [X] All reviewers listed in parent message
+- [X] No duplicate reviewers
 
 ---
 
@@ -132,9 +132,9 @@ Before testing, ensure:
 3. Check Discord
 
 **Expected Results:**
-- [ ] All reviewers appear in parent message
-- [ ] Thread messages for each reviewer (may be multiple)
-- [ ] No duplicates or missing reviewers
+- [ ] All reviewers appear in parent message (wasn't able to test because remove logic incorrect)
+- [X] Thread messages for each reviewer (may be multiple)
+- [X] No duplicates or missing reviewers
 
 ---
 
@@ -145,8 +145,8 @@ Before testing, ensure:
 3. Check Discord
 
 **Expected Results:**
-- [ ] Thread message: "👋 @reviewer has been removed as a reviewer from this PR."
-- [ ] Reviewer removed from Discord thread (if they were in it)
+- [X] Thread message: "👋 @reviewer has been removed as a reviewer from this PR."
+- [X] Reviewer removed from Discord thread (if they were in it)
 - [ ] Parent message Reviewers line updated (reviewer removed)
 - [ ] If last reviewer removed, shows "⚠️ No reviewers assigned" warning
 
@@ -161,7 +161,7 @@ Before testing, ensure:
 **Expected Results:**
 - [ ] All reviewers removed from parent message
 - [ ] Warning message appears: "⚠️ No reviewers assigned"
-- [ ] Status remains: In Review
+- [X] Status remains: In Review
 
 ---
 
@@ -174,15 +174,15 @@ Before testing, ensure:
 3. Check Discord
 
 **Expected Results:**
-- [ ] ✅ reaction added to parent message
-- [ ] Thread message shows:
+- [X] ✅ reaction added to parent message
+- [X] Thread message shows:
   - "✅ **APPROVED BY** @reviewer"
   - Review comment in quote block
   - "@author Ready to merge! 🚀" (if base is `dev`)
   - "@author @Operations Ready to merge! 🚀" (if base is NOT `dev`)
-- [ ] Parent message Status updated to: "Status: Approved"
-- [ ] Old review status lines removed (if any)
-
+- [X] Parent message Status updated to: "Status: Approved"
+- [X] Old review status lines removed (if any)
+- [ ] Discord thread is locked
 ---
 
 #### Test 4.2: Approve PR (Without Comment)
