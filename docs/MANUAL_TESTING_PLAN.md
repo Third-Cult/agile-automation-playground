@@ -70,13 +70,13 @@ Before starting, ensure you have:
 4. Submit the PR
 
 **Expected Results:**
-- [ ] Discord message appears
-- [ ] Message shows:
+- [X] Discord message appears
+- [X] Message shows:
   - Status: ":eyes: Ready for Review"
   - Warning message: "WARNING::No reviewers assigned:"
   - Warning text: "PR has to be reviewed by another member before merging."
-- [ ] Thread created
-- [ ] Metadata saved
+- [X] Thread created
+- [X] Metadata saved
 
 **Verification:**
 - Check for warning message in Discord
