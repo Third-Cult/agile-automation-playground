@@ -39,16 +39,16 @@ Before starting, ensure you have:
 4. Submit the PR
 
 **Expected Results:**
-- [ ] Discord message appears in the configured channel
+- [X] Discord message appears in the configured channel
 - [ ] Message shows:
   - PR number and title
   - Branch information (feature → main)
   - Author mention (Discord mention if mapped, otherwise @username)
   - Reviewers listed (Discord mentions if mapped)
   - Status: ":pencil: Draft - In Progress"
-- [ ] Thread created from the message
-- [ ] Thread contains: ":thread: Keep all conversations/dialogue about the contents of the PR in this thread **or** in the PR's comments"
-- [ ] Hidden metadata comment added to PR (check PR comments)
+- [X] Thread created from the message
+- [X] Thread contains: ":thread: Keep all conversations/dialogue about the contents of the PR in this thread **or** in the PR's comments"
+- [X] Hidden metadata comment added to PR (check PR comments)
 
 **Verification:**
 - Check Discord channel for the message
