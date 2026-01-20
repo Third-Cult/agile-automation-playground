@@ -358,9 +358,9 @@ Not possible to test - GitHub doesn't allow request changes without comment
 2. Check Discord
 
 **Expected Results:**
-- [ ] Reviewer mentioned as `@github_username` (fallback)
-- [ ] No error thrown
-- [ ] Workflow completes successfully
+- [X] Reviewer mentioned as `@github_username` (fallback)
+- [X] No error thrown
+- [X] Workflow completes successfully
 
 ---
 
@@ -425,30 +425,30 @@ After completing all tests, verify:
 
 ### Functionality
 - [ ] All PR states handled correctly
-- [ ] Status transitions work as expected
+- [X] Status transitions work as expected
 - [ ] Reviewers added/removed correctly
-- [ ] Review comments appear in thread
+- [X] Review comments appear in thread
 - [ ] Merge/close events handled
 - [ ] Thread management works (creation, closure)
 
 ### Message Formatting
-- [ ] No link embeds (flags: 4 working)
-- [ ] @ mentions work correctly
+- [X] No link embeds (flags: 4 working)
+- [X] @ mentions work correctly
 - [ ] Emojis display properly
-- [ ] Markdown formatting correct
-- [ ] Long content handled gracefully
+- [X] Markdown formatting correct
+- [X] Long content handled gracefully
 
 ### Error Handling
-- [ ] Missing metadata handled gracefully
-- [ ] Deleted messages don't crash workflow
-- [ ] Missing user mappings handled
-- [ ] Network errors logged but don't fail workflow
+- [X] Missing metadata handled gracefully
+- [X] Deleted messages don't crash workflow
+- [X] Missing user mappings handled
+- [X] Network errors logged but don't fail workflow
 
 ### Edge Cases
-- [ ] Multiple simultaneous events handled
-- [ ] Special characters work
-- [ ] Very long titles handled
-- [ ] Empty review bodies handled
+- [X] Multiple simultaneous events handled
+- [X] Special characters work
+- [X] Very long titles handled
+- [X] Empty review bodies handled
 
 ## Common Issues to Watch For
 
