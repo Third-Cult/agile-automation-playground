@@ -2,7 +2,7 @@ name: Discord PR Notifications
 
 on:
   pull_request:
-    types: [opened, review_requested, review_request_removed, synchronize, closed]
+    types: [opened, ready_for_review, review_requested, review_request_removed, synchronize, closed]
   pull_request_review:
     types: [submitted, dismissed]
 
@@ -143,11 +143,116 @@ jobs:
               });
             }
 
+  handle-pr-ready-for-review:
+    if: github.event_name == 'pull_request' && github.event.action == 'ready_for_review'
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+      issues: read
+    steps:
+      - name: Handle PR Ready for Review
+        uses: actions/github-script@v7
+        env:
+          DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
+          DISCORD_USER_MAPPING: ${{ secrets.DISCORD_USER_MAPPING }}
+        with:
+          script: |
+            const pr = context.payload.pull_request;
+            const prNumber = pr.number;
+
+            // Get bot token
+            const botToken = process.env.DISCORD_BOT_TOKEN;
+            if (!botToken) {
+                core.setFailed('DISCORD_BOT_TOKEN secret must be set');
+                return;
+            }
+
+            // Find metadata comment
+            const comments = await github.rest.issues.listComments({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: prNumber
+            });
+
+            let metadata = null;
+            for (const comment of comments.data) {
+                const match = comment.body.match(/<!-- DISCORD_BOT_METADATA\n([\s\S]*?)\n-->/);
+                if (match) {
+                try {
+                    metadata = JSON.parse(match[1]);
+                    break;
+                } catch (e) {
+                    core.warning(`Failed to parse metadata: ${e.message}`);
+                }
+                }
+            }
+
+            if (!metadata || !metadata.thread_id) {
+                core.warning('No Discord thread found for this PR. Skipping.');
+                // Comment in PR
+                try {
+                  await github.rest.issues.createComment({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    issue_number: prNumber,
+                    body: '⚠️ Discord integration: Could not find Discord thread metadata for this PR. The Discord bot may not be able to update notifications.'
+                  });
+                } catch (e) {
+                  core.warning(`Failed to comment in PR: ${e.message}`);
+                }
+                return;
+            }
+
+            // Remove DRAFT marker from parent message
+            try {
+                const messageResponse = await fetch(`https://discord.com/api/v10/channels/${metadata.channel_id}/messages/${metadata.message_id}`, {
+                method: 'GET',
+                headers: {
+                    'Authorization': `Bot ${botToken}`
+                }
+                });
+
+                if (messageResponse.ok) {
+                const messageData = await messageResponse.json();
+                let content = messageData.content;
+
+                // Remove DRAFT prefix if present
+                content = content.replace(/📝 \*\*DRAFT\*\* /g, '');
+
+                // Edit the message
+                await fetch(`https://discord.com/api/v10/channels/${metadata.channel_id}/messages/${metadata.message_id}`, {
+                    method: 'PATCH',
+                    headers: {
+                    'Authorization': `Bot ${botToken}`,
+                    'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                    content: content,
+                    flags: 4 // Suppress embeds
+                    })
+                });
+                }
+            } catch (e) {
+                core.warning(`Failed to edit parent message: ${e.message}`);
+            }
+
+            // Post in thread
+            await fetch(`https://discord.com/api/v10/channels/${metadata.thread_id}/messages`, {
+                method: 'POST',
+                headers: {
+                'Authorization': `Bot ${botToken}`,
+                'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                content: '✅ This PR is now ready for review!'
+                })
+            });
+
   handle-reviewer-added:
     if: github.event_name == 'pull_request' && github.event.action == 'review_requested'
     runs-on: ubuntu-latest
     permissions:
-      pull-requests: read
+      pull-requests: write
       issues: read
     steps:
       - name: Handle Reviewer Added
@@ -208,6 +313,17 @@ jobs:
 
             if (!metadata || !metadata.thread_id) {
             core.warning('No Discord thread found for this PR. Skipping.');
+            // Comment in PR
+            try {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: prNumber,
+                body: '⚠️ Discord integration: Could not find Discord thread metadata for this PR. The Discord bot may not be able to update notifications.'
+              });
+            } catch (e) {
+              core.warning(`Failed to comment in PR: ${e.message}`);
+            }
             return;
             }
 
@@ -302,7 +418,7 @@ jobs:
     if: github.event_name == 'pull_request' && github.event.action == 'review_request_removed'
     runs-on: ubuntu-latest
     permissions:
-        pull-requests: read
+        pull-requests: write
         issues: read
     steps:
       - name: Handle Reviewer Removed
@@ -371,6 +487,17 @@ jobs:
             if (!metadata || !metadata.thread_id) 
             {
                 core.warning('No Discord thread found for this PR. Skipping.');
+                // Comment in PR
+                try {
+                  await github.rest.issues.createComment({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    issue_number: prNumber,
+                    body: '⚠️ Discord integration: Could not find Discord thread metadata for this PR. The Discord bot may not be able to update notifications.'
+                  });
+                } catch (e) {
+                  core.warning(`Failed to comment in PR: ${e.message}`);
+                }
                 return;
             }
 
@@ -459,7 +586,6 @@ jobs:
                           break;
                         }
                     }
-                }
                 
                 if (reviewersLineIndex >= 0) 
                 {
@@ -510,6 +636,7 @@ jobs:
                         flags: 4 // Suppress embeds
                     })
                 });
+                }
             } catch (e) 
             {
                 core.warning(`Failed to edit parent message: ${e.message}`);
@@ -519,7 +646,7 @@ jobs:
     if: github.event_name == 'pull_request_review'
     runs-on: ubuntu-latest
     permissions:
-      pull-requests: read
+      pull-requests: write
       issues: read
     steps:
       - name: Handle PR Review
@@ -606,6 +733,17 @@ jobs:
                 
                 if (!metadata) {
                     core.warning('No Discord metadata found for this PR. Skipping.');
+                    // Comment in PR
+                    try {
+                      await github.rest.issues.createComment({
+                        owner: context.repo.owner,
+                        repo: context.repo.repo,
+                        issue_number: prNumber,
+                        body: '⚠️ Discord integration: Could not find Discord metadata for this PR. The Discord bot may not be able to update notifications.'
+                      });
+                    } catch (e) {
+                      core.warning(`Failed to comment in PR: ${e.message}`);
+                    }
                     return;
                 }
                 
@@ -620,13 +758,41 @@ jobs:
                     statusText = 'CHANGES REQUESTED';
                 }
                 
-                // Add reaction to parent message
+                                // Remove existing reactions before adding new one (mutually exclusive)
                 if (emoji) {
-                    await fetch(`https://discord.com/api/v10/channels/${metadata.channel_id}/messages/${metadata.message_id}/reactions/${emoji}/@me`, {
-                    method: 'PUT',
-                    headers: {
-                        'Authorization': `Bot ${botToken}`
+                    // Remove opposite reaction if present
+                    if (reviewState === 'approved') {
+                        // Remove ❌ if present
+                        try {
+                            await fetch(`https://discord.com/api/v10/channels/${metadata.channel_id}/messages/${metadata.message_id}/reactions/❌/@me`, {
+                                method: 'DELETE',
+                                headers: {
+                                    'Authorization': `Bot ${botToken}`
+                                }
+                            });
+                        } catch (e) {
+                            // Reaction might not exist, that's okay
+                        }
+                    } else if (reviewState === 'changes_requested') {
+                        // Remove ✅ if present
+                        try {
+                            await fetch(`https://discord.com/api/v10/channels/${metadata.channel_id}/messages/${metadata.message_id}/reactions/✅/@me`, {
+                                method: 'DELETE',
+                                headers: {
+                                    'Authorization': `Bot ${botToken}`
+                                }
+                            });
+                        } catch (e) {
+                            // Reaction might not exist, that's okay
+                        }
                     }
+                    
+                    // Add new reaction
+                    await fetch(`https://discord.com/api/v10/channels/${metadata.channel_id}/messages/${metadata.message_id}/reactions/${emoji}/@me`, {
+                        method: 'PUT',
+                        headers: {
+                            'Authorization': `Bot ${botToken}`
+                        }
                     });
                 }
                 
@@ -675,6 +841,20 @@ jobs:
                         content: reviewMessage
                     })
                     });
+                    
+                    // Lock thread if approved
+                    if (reviewState === 'approved') {
+                        await fetch(`https://discord.com/api/v10/channels/${metadata.thread_id}`, {
+                            method: 'PATCH',
+                            headers: {
+                                'Authorization': `Bot ${botToken}`,
+                                'Content-Type': 'application/json',
+                            },
+                            body: JSON.stringify({
+                                locked: true
+                            })
+                        });
+                    }
                 }
                 
                 // Update parent message with review status
@@ -690,48 +870,47 @@ jobs:
                     const messageData = await messageResponse.json();
                     let content = messageData.content;
                     
-                    // Check if there's already a review status line
+                    // Process lines and update status - remove approval/changes lines, only keep Status
                     const lines = content.split('\n');
                     let newLines = [];
-                    let statusLineAdded = false;
+                    let statusLineFound = false;
 
-                    // Process lines and update status
                     for (let i = 0; i < lines.length; i++) {
-                    const line = lines[i];
-                    
-                    // Update status line if found
-                    if (line.startsWith('Status:')) {
+                      const line = lines[i];
+                      
+                      // Skip any existing approval/changes status lines (they should only be in thread)
+                      if (line.includes('✅ APPROVED') || line.includes('❌ CHANGES REQUESTED') || 
+                          line.includes('✅ **APPROVED') || line.includes('❌ **CHANGES REQUESTED')) {
+                        continue; // Skip these lines
+                      }
+                      
+                      // Update status line if found
+                      if (line.startsWith('Status:')) {
                         if (reviewState === 'approved') {
-                        newLines.push('Status: Approved');
+                          newLines.push('Status: Approved');
                         } else if (reviewState === 'changes_requested') {
-                        newLines.push('Status: Needs Changes');
+                          newLines.push('Status: Needs Changes');
                         } else {
-                        newLines.push(line); // Keep original if unknown state
+                          newLines.push(line); // Keep original if unknown state
                         }
-                        statusLineAdded = true;
-                    } else {
-                        // Replace existing review status if found
-                        if (line.includes('✅ APPROVED') || line.includes('❌ CHANGES REQUESTED')) {
-                        newLines.push(`${emoji} **${statusText}** by ${reviewerMention}`);
-                        } else if (!statusLineAdded && (line.includes('Reviewers:') || line.includes('⚠️ No reviewers assigned'))) {
-                        // Add status after reviewers line
+                        statusLineFound = true;
+                      } else {
                         newLines.push(line);
-                        newLines.push(`${emoji} **${statusText}** by ${reviewerMention}`);
-                        statusLineAdded = true;
-                        } else {
-                        newLines.push(line);
-                        }
-                    }
+                      }
                     }
 
-                    // If no status line was found, add it
-                    if (!statusLineAdded) {
-                    const reviewersIndex = newLines.findIndex(line => line.includes('Reviewers:') || line.includes('⚠️ No reviewers assigned'));
-                    if (reviewersIndex >= 0) {
-                        newLines.splice(reviewersIndex + 1, 0, reviewState === 'approved' ? 'Status: Approved' : 'Status: Needs Changes');
-                    } else {
+                    // If no status line was found, add it after Reviewers
+                    if (!statusLineFound) {
+                      const reviewersIndex = newLines.findIndex(line => 
+                        line.includes('Reviewers:') || line.includes('⚠️ No reviewers assigned')
+                      );
+                      if (reviewersIndex >= 0) {
+                        newLines.splice(reviewersIndex + 1, 0, 
+                          reviewState === 'approved' ? 'Status: Approved' : 'Status: Needs Changes'
+                        );
+                      } else {
                         newLines.push(reviewState === 'approved' ? 'Status: Approved' : 'Status: Needs Changes');
-                    }
+                      }
                     }
 
                     content = newLines.join('\n');
@@ -753,11 +932,190 @@ jobs:
                     core.warning(`Failed to edit parent message: ${e.message}`);
                 }
 
+  handle-pr-synchronize:
+    if: github.event_name == 'pull_request' && github.event.action == 'synchronize'
+    runs-on: ubuntu-latest
+    permissions:
+        pull-requests: write
+        issues: read
+    steps:
+      - name: Handle PR Synchronize
+        uses: actions/github-script@v7
+        env:
+            DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
+            DISCORD_USER_MAPPING: ${{ secrets.DISCORD_USER_MAPPING }}
+        with:
+          script: |
+            const pr = context.payload.pull_request;
+            const prNumber = pr.number;
+
+            // Get bot token
+            const botToken = process.env.DISCORD_BOT_TOKEN;
+            if (!botToken) {
+                core.setFailed('DISCORD_BOT_TOKEN secret must be set');
+                return;
+            }
+
+            // Load user mapping
+            const userMapping = process.env.DISCORD_USER_MAPPING 
+                ? JSON.parse(process.env.DISCORD_USER_MAPPING) 
+                : {};
+
+            const mapToDiscord = (githubUsername) => {
+                return userMapping[githubUsername] 
+                ? `<@${userMapping[githubUsername]}>` 
+                : `@${githubUsername}`;
+            };
+
+            // Find metadata comment
+            const comments = await github.rest.issues.listComments({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: prNumber
+            });
+
+            let metadata = null;
+            for (const comment of comments.data) {
+                const match = comment.body.match(/<!-- DISCORD_BOT_METADATA\n([\s\S]*?)\n-->/);
+                if (match) {
+                try {
+                    metadata = JSON.parse(match[1]);
+                    break;
+                } catch (e) {
+                    core.warning(`Failed to parse metadata: ${e.message}`);
+                }
+                }
+            }
+
+            if (!metadata || !metadata.thread_id) {
+                core.warning('No Discord thread found for this PR. Skipping.');
+                // Comment in PR
+                try {
+                  await github.rest.issues.createComment({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    issue_number: prNumber,
+                    body: '⚠️ Discord integration: Could not find Discord thread metadata for this PR. The Discord bot may not be able to update notifications.'
+                  });
+                } catch (e) {
+                  core.warning(`Failed to comment in PR: ${e.message}`);
+                }
+                return;
+            }
+
+            // Check if PR was previously approved by reading Discord message
+            try {
+                const messageResponse = await fetch(`https://discord.com/api/v10/channels/${metadata.channel_id}/messages/${metadata.message_id}`, {
+                method: 'GET',
+                headers: {
+                    'Authorization': `Bot ${botToken}`
+                }
+                });
+
+                if (!messageResponse.ok) {
+                core.warning('Could not fetch Discord message. Skipping.');
+                return;
+                }
+
+                const messageData = await messageResponse.json();
+                const content = messageData.content;
+
+                // Check if status is "Approved"
+                const isApproved = content.includes('Status: Approved');
+
+                if (isApproved) {
+                // Get current reviewers
+                const allReviewers = pr.requested_reviewers || [];
+                const allReviewerLogins = allReviewers.map(r => r.login);
+
+                // Unlock thread if it was locked
+                try {
+                    await fetch(`https://discord.com/api/v10/channels/${metadata.thread_id}`, {
+                    method: 'PATCH',
+                    headers: {
+                        'Authorization': `Bot ${botToken}`,
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        locked: false
+                    })
+                    });
+                } catch (e) {
+                    core.warning(`Failed to unlock thread: ${e.message}`);
+                }
+
+                // Update status to "In Review"
+                const lines = content.split('\n');
+                const newLines = lines.map(line => {
+                    if (line.startsWith('Status:')) {
+                    return 'Status: In Review';
+                    }
+                    return line;
+                });
+
+                const updatedContent = newLines.join('\n');
+
+                await fetch(`https://discord.com/api/v10/channels/${metadata.channel_id}/messages/${metadata.message_id}`, {
+                    method: 'PATCH',
+                    headers: {
+                    'Authorization': `Bot ${botToken}`,
+                    'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                    content: updatedContent,
+                    flags: 4 // Suppress embeds
+                    })
+                });
+
+                // Post in thread to notify reviewers
+                if (allReviewerLogins.length > 0) {
+                    const reviewerMentions = allReviewerLogins.map(mapToDiscord).join(' ');
+                    await fetch(`https://discord.com/api/v10/channels/${metadata.thread_id}/messages`, {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bot ${botToken}`,
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        content: `⚠️ New commits have been pushed to this PR. ${reviewerMentions} Please review the updates.`
+                    })
+                    });
+                } else {
+                    await fetch(`https://discord.com/api/v10/channels/${metadata.thread_id}/messages`, {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bot ${botToken}`,
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        content: '⚠️ New commits have been pushed to this PR. Please add reviewers if needed.'
+                    })
+                    });
+                }
+
+                // Re-request reviews
+                if (allReviewerLogins.length > 0) {
+                    try {
+                    await github.rest.pulls.requestReviewers({
+                        owner: context.repo.owner,
+                        repo: context.repo.repo,
+                        pull_number: prNumber,
+                        reviewers: allReviewerLogins
+                    });
+                    } catch (e) {
+                    core.warning(`Failed to re-request reviews: ${e.message}`);
+                    }
+                }
+                }
+            } catch (e) {
+                core.warning(`Failed to handle PR synchronize: ${e.message}`);
+            }
+                
   handle-review-dismissed:
     if: github.event_name == 'pull_request_review' && github.event.action == 'dismissed'
     runs-on: ubuntu-latest
     permissions:
-      pull-requests: read
+      pull-requests: write
       issues: read
     steps:
       - name: Handle Review Dismissed
@@ -819,7 +1177,18 @@ jobs:
                 
                 if (!metadata || !metadata.thread_id) {
                     core.warning('No Discord thread found for this PR. Skipping.');
-                    return;
+                // Comment in PR
+                try {
+                  await github.rest.issues.createComment({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    issue_number: prNumber,
+                    body: '⚠️ Discord integration: Could not find Discord thread metadata for this PR. The Discord bot may not be able to update notifications.'
+                  });
+                } catch (e) {
+                  core.warning(`Failed to comment in PR: ${e.message}`);
+                }
+                return;
                 }
                 
                 // Post in thread to notify the reviewer
@@ -835,11 +1204,44 @@ jobs:
                     })
                 });
                 
+                // Update parent message status to "In Review"
+                try {
+                  const messageResponse = await fetch(`https://discord.com/api/v10/channels/${metadata.channel_id}/messages/${metadata.message_id}`, {
+                    method: 'GET',
+                    headers: {
+                      'Authorization': `Bot ${botToken}`
+                    }
+                  });
+                  
+                  if (messageResponse.ok) {
+                    const messageData = await messageResponse.json();
+                    let content = messageData.content;
+                    
+                    // Update status from "Needs Changes" to "In Review"
+                    content = content.replace(/Status: .*/g, 'Status: In Review');
+                    
+                    // Edit the message
+                    await fetch(`https://discord.com/api/v10/channels/${metadata.channel_id}/messages/${metadata.message_id}`, {
+                      method: 'PATCH',
+                      headers: {
+                        'Authorization': `Bot ${botToken}`,
+                        'Content-Type': 'application/json',
+                      },
+                      body: JSON.stringify({
+                        content: content,
+                        flags: 4 // Suppress embeds
+                      })
+                    });
+                  }
+                } catch (e) {
+                  core.warning(`Failed to edit parent message: ${e.message}`);
+                }
+                
   handle-pr-closed:
       if: github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged == false
       runs-on: ubuntu-latest
       permissions:
-            pull-requests: read
+            pull-requests: write
             issues: read
       steps:
       - name: Handle PR Closed
@@ -916,6 +1318,17 @@ jobs:
                     
                     if (!metadata || !metadata.thread_id) {
                         core.warning('No Discord thread found for this PR. Skipping.');
+                        // Comment in PR
+                        try {
+                        await github.rest.issues.createComment({
+                            owner: context.repo.owner,
+                            repo: context.repo.repo,
+                            issue_number: prNumber,
+                            body: '⚠️ Discord integration: Could not find Discord thread metadata for this PR. The Discord bot may not be able to update notifications.'
+                        });
+                        } catch (e) {
+                        core.warning(`Failed to comment in PR: ${e.message}`);
+                        }
                         return;
                     }
                     
@@ -935,6 +1348,18 @@ jobs:
                         },
                         body: JSON.stringify({
                         content: closeMessage
+                        })
+                    });
+                    
+                    // Lock the thread
+                    await fetch(`https://discord.com/api/v10/channels/${metadata.thread_id}`, {
+                        method: 'PATCH',
+                        headers: {
+                            'Authorization': `Bot ${botToken}`,
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({
+                            locked: true
                         })
                     });
                     
@@ -974,7 +1399,7 @@ jobs:
       if: github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged == true
       runs-on: ubuntu-latest
       permissions:
-            pull-requests: read
+            pull-requests: write
             issues: read
             contents: read
       steps:
@@ -1045,6 +1470,17 @@ jobs:
                 
                 if (!metadata) {
                     core.warning('No Discord metadata found for this PR. Skipping.');
+                    // Comment in PR
+                    try {
+                    await github.rest.issues.createComment({
+                        owner: context.repo.owner,
+                        repo: context.repo.repo,
+                        issue_number: prNumber,
+                        body: '⚠️ Discord integration: Could not find Discord thread metadata for this PR. The Discord bot may not be able to update notifications.'
+                    });
+                    } catch (e) {
+                    core.warning(`Failed to comment in PR: ${e.message}`);
+                    }
                     return;
                 }
                 
@@ -1077,7 +1513,7 @@ jobs:
                     })
                     });
                     
-                    // Close the thread
+                     // Archive and lock the thread
                     await fetch(`https://discord.com/api/v10/channels/${metadata.thread_id}`, {
                     method: 'PATCH',
                     headers: {
@@ -1085,7 +1521,8 @@ jobs:
                         'Content-Type': 'application/json',
                     },
                     body: JSON.stringify({
-                        archived: true
+                        archived: true,
+                        locked: true
                     })
                     });
                 }
