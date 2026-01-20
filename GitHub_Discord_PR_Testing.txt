@@ -317,9 +317,10 @@ Not possible to test - GitHub doesn't allow request changes without comment
 3. Check workflow logs
 
 **Expected Results:**
-- [ ] Workflow completes without error
-- [ ] Warning logged: "No Discord metadata found for this PR. Skipping."
-- [ ] No Discord messages posted
+- [X] Workflow completes without error
+- [X] Warning logged: "No Discord metadata found for this PR. Skipping."
+- [ ] Warning commented into the PR as a comment
+- [X] No Discord messages posted
 
 ---
 
@@ -331,9 +332,9 @@ Not possible to test - GitHub doesn't allow request changes without comment
 4. Check workflow logs
 
 **Expected Results:**
-- [ ] Workflow handles error gracefully
-- [ ] Warning logged about message not found
-- [ ] Workflow doesn't fail completely
+- [X] Workflow handles error gracefully
+- [X] Warning logged about message not found
+- [X] Workflow doesn't fail completely
 
 ---
 
@@ -345,9 +346,9 @@ Not possible to test - GitHub doesn't allow request changes without comment
 4. Check workflow logs
 
 **Expected Results:**
-- [ ] Workflow handles error gracefully
-- [ ] Warning logged
-- [ ] Workflow continues
+- [X] Workflow handles error gracefully
+- [X] Warning logged
+- [X] Workflow continues
 
 ---
 
@@ -412,22 +413,9 @@ Not possible to test - GitHub doesn't allow request changes without comment
 5. Merge → Verify "Status: Merged"
 
 **Expected Results:**
-- [ ] Only ONE Status line exists at any time
-- [ ] Previous status replaced, not appended
-- [ ] Status line in correct location (after Reviewers)
-
----
-
-#### Test 8.2: Status Line Missing (Old PR)
-**Steps:**
-1. Manually edit Discord message to remove Status line
-2. Trigger an event that updates status
-3. Check Discord
-
-**Expected Results:**
-- [ ] Status line added back
-- [ ] Added in correct location
-- [ ] No duplicate status lines
+- [X] Only ONE Status line exists at any time
+- [X] Previous status replaced, not appended
+- [X] Status line in correct location (after Reviewers)
 
 ---
 
