@@ -303,8 +303,8 @@ Not possible to test - GitHub doesn't allow request changes without comment
 4. Check Discord
 
 **Expected Results:**
-- [ ] Closing comment appears in thread message
-- [ ] Comment formatted as quote block
+- [X] Closing comment appears in thread message
+- [X] Comment formatted as quote block
 
 ---
 
@@ -370,9 +370,9 @@ Not possible to test - GitHub doesn't allow request changes without comment
 2. Check Discord
 
 **Expected Results:**
-- [ ] Thread name truncated to 100 characters
-- [ ] Full title in parent message
-- [ ] No errors
+- [X] Thread name truncated to 100 characters
+- [X] Full title in parent message
+- [X] No errors
 
 ---
 
@@ -382,9 +382,9 @@ Not possible to test - GitHub doesn't allow request changes without comment
 2. Check Discord
 
 **Expected Results:**
-- [ ] Message renders correctly
-- [ ] No parsing errors
-- [ ] Special characters displayed properly
+- [X] Message renders correctly
+- [X] No parsing errors
+- [X] Special characters displayed properly
 
 ---
 
@@ -395,10 +395,10 @@ Not possible to test - GitHub doesn't allow request changes without comment
 3. Check Discord
 
 **Expected Results:**
-- [ ] All events processed
-- [ ] Messages appear in correct order
-- [ ] Final status is "Merged"
-- [ ] No race conditions or missing updates
+- [X] All events processed
+- [X] Messages appear in correct order
+- [X] Final status is "Merged"
+- [X] No race conditions or missing updates
 
 ---
 
