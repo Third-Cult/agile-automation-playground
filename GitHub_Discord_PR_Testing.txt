@@ -206,17 +206,18 @@ Before testing, ensure:
 3. Check Discord
 
 **Expected Results:**
-- [ ] ❌ reaction added to parent message
-- [ ] Thread message shows:
+- [X] ❌ reaction added to parent message
+- [X] Thread message shows:
   - "❌ **CHANGES REQUESTED BY** @reviewer"
   - Review comment in quote block
   - "@author Please address the requested changes."
-- [ ] Parent message Status updated to: "Status: Needs Changes"
-- [ ] If previously "Approved", status changes to "Needs Changes"
+- [X] Parent message Status updated to: "Status: Needs Changes"
+- [X] If previously "Approved", status changes to "Needs Changes"
 
 ---
 
 #### Test 4.4: Request Changes (Without Comment)
+Not possible to test - GitHub doesn't allow request changes without comment
 **Steps:**
 1. Use PR that's "In Review"
 2. Request changes without a comment
@@ -237,10 +238,9 @@ Before testing, ensure:
 4. Check Discord after each
 
 **Expected Results:**
-- [ ] Each approval posts separate thread message
-- [ ] Status remains "Status: Approved" (doesn't change)
-- [ ] Both approval messages visible in thread
-- [ ] Multiple ✅ reactions on parent message (one per approval)
+- [X] Each approval posts separate thread message
+- [X] Status remains "Status: Approved" (doesn't change)
+- [X] Both approval messages visible in thread
 
 ---
 
@@ -251,9 +251,8 @@ Before testing, ensure:
 3. Check Discord
 
 **Expected Results:**
-- [ ] Status changes from "Status: Needs Changes" to "Status: Approved"
-- [ ] New approval message in thread
-- [ ] Both ❌ and ✅ reactions on parent message
+- [X] Status changes from "Status: Needs Changes" to "Status: Approved"
+- [X] New approval message in thread
 
 ---
 
@@ -264,68 +263,21 @@ Before testing, ensure:
 3. Check Discord
 
 **Expected Results:**
-- [ ] Status changes from "Status: Approved" to "Status: Needs Changes"
-- [ ] Changes requested message in thread
-- [ ] Both ✅ and ❌ reactions on parent message
+- [X] Status changes from "Status: Approved" to "Status: Needs Changes"
+- [X] Changes requested message in thread
 
----
-
-### Phase 5: Review Dismissal
-
-#### Test 5.1: Dismiss Changes Requested Review
-**Steps:**
-1. Use PR with "Needs Changes" status
-2. Dismiss the changes_requested review
-3. Check Discord
-
-**Expected Results:**
-- [ ] Thread message: "✅ @reviewer The requested changes have been addressed. Please review the updates."
-- [ ] Status should update to: "Status: In Review" (verify if implemented)
-- [ ] Reviewer is @ mentioned
-
-**Note:** Verify if status update is implemented.
-
----
-
-#### Test 5.2: Dismiss Approved Review
-**Steps:**
-1. Use PR with "Approved" status
-2. Dismiss an approved review
-3. Check Discord
-
-**Expected Results:**
-- [ ] No message posted (only handles changes_requested dismissals)
-- [ ] Status remains: Approved (if other approvals exist)
-
----
-
-### Phase 6: PR Closure
-
-#### Test 6.1: Merge PR (Into Dev)
-**Steps:**
-1. Use PR that's "Approved" and targeting `dev` branch
-2. Merge the PR
-3. Check Discord
-
-**Expected Results:**
-- [ ] 🎉 reaction added to parent message
-- [ ] Thread message: "🎉 **MERGED BY** @merger"
-- [ ] Merge commit message shown (if available)
-- [ ] Parent message Status updated to: "Status: Merged"
-- [ ] Thread is closed/archived
-
----
-
-#### Test 6.2: Merge PR (Into Non-Dev Branch)
+#### Test 6.2: Merge PR
 **Steps:**
 1. Use PR that's "Approved" and targeting branch other than `dev`
 2. Merge the PR
 3. Check Discord
 
 **Expected Results:**
-- [ ] Same as Test 6.1
-- [ ] Status: Merged
-- [ ] Thread closed
+- [X] 🎉 reaction added to parent message
+- [X] Thread message: "🎉 **MERGED BY** @merger"
+- [X] Merge commit message shown (if available)
+- [X] Parent message Status updated to: "Status: Merged"
+- [ ] Thread is locked
 
 ---
 
@@ -336,10 +288,10 @@ Before testing, ensure:
 3. Check Discord
 
 **Expected Results:**
-- [ ] Thread message: "🚫 **CLOSED BY** @closer"
-- [ ] Closing comment shown (if available)
-- [ ] Parent message Status updated to: "Status: Closed"
-- [ ] Thread remains open (not archived)
+- [X] Thread message: "🚫 **CLOSED BY** @closer"
+- [X] Closing comment shown (if available)
+- [X] Parent message Status updated to: "Status: Closed"
+- [ ] Thread locks
 
 ---
 
@@ -351,8 +303,8 @@ Before testing, ensure:
 4. Check Discord
 
 **Expected Results:**
-- [ ] Closing comment appears in thread message
-- [ ] Comment formatted as quote block
+- [X] Closing comment appears in thread message
+- [X] Comment formatted as quote block
 
 ---
 
@@ -361,13 +313,14 @@ Before testing, ensure:
 #### Test 7.1: PR Without Metadata Comment
 **Steps:**
 1. Manually delete the metadata comment from a PR
-2. Trigger any event (add reviewer, approve, etc.)
+2. Trigger any event (add reviewer, approve, etc.) - did this
 3. Check workflow logs
 
 **Expected Results:**
-- [ ] Workflow completes without error
-- [ ] Warning logged: "No Discord metadata found for this PR. Skipping."
-- [ ] No Discord messages posted
+- [X] Workflow completes without error
+- [X] Warning logged: "No Discord metadata found for this PR. Skipping."
+- [ ] Warning commented into the PR as a comment
+- [X] No Discord messages posted
 
 ---
 
@@ -379,9 +332,9 @@ Before testing, ensure:
 4. Check workflow logs
 
 **Expected Results:**
-- [ ] Workflow handles error gracefully
-- [ ] Warning logged about message not found
-- [ ] Workflow doesn't fail completely
+- [X] Workflow handles error gracefully
+- [X] Warning logged about message not found
+- [X] Workflow doesn't fail completely
 
 ---
 
@@ -393,9 +346,9 @@ Before testing, ensure:
 4. Check workflow logs
 
 **Expected Results:**
-- [ ] Workflow handles error gracefully
-- [ ] Warning logged
-- [ ] Workflow continues
+- [X] Workflow handles error gracefully
+- [X] Warning logged
+- [X] Workflow continues
 
 ---
 
@@ -405,9 +358,9 @@ Before testing, ensure:
 2. Check Discord
 
 **Expected Results:**
-- [ ] Reviewer mentioned as `@github_username` (fallback)
-- [ ] No error thrown
-- [ ] Workflow completes successfully
+- [X] Reviewer mentioned as `@github_username` (fallback)
+- [X] No error thrown
+- [X] Workflow completes successfully
 
 ---
 
@@ -417,9 +370,9 @@ Before testing, ensure:
 2. Check Discord
 
 **Expected Results:**
-- [ ] Thread name truncated to 100 characters
-- [ ] Full title in parent message
-- [ ] No errors
+- [X] Thread name truncated to 100 characters
+- [X] Full title in parent message
+- [X] No errors
 
 ---
 
@@ -429,9 +382,9 @@ Before testing, ensure:
 2. Check Discord
 
 **Expected Results:**
-- [ ] Message renders correctly
-- [ ] No parsing errors
-- [ ] Special characters displayed properly
+- [X] Message renders correctly
+- [X] No parsing errors
+- [X] Special characters displayed properly
 
 ---
 
@@ -442,10 +395,10 @@ Before testing, ensure:
 3. Check Discord
 
 **Expected Results:**
-- [ ] All events processed
-- [ ] Messages appear in correct order
-- [ ] Final status is "Merged"
-- [ ] No race conditions or missing updates
+- [X] All events processed
+- [X] Messages appear in correct order
+- [X] Final status is "Merged"
+- [X] No race conditions or missing updates
 
 ---
 
@@ -460,22 +413,9 @@ Before testing, ensure:
 5. Merge → Verify "Status: Merged"
 
 **Expected Results:**
-- [ ] Only ONE Status line exists at any time
-- [ ] Previous status replaced, not appended
-- [ ] Status line in correct location (after Reviewers)
-
----
-
-#### Test 8.2: Status Line Missing (Old PR)
-**Steps:**
-1. Manually edit Discord message to remove Status line
-2. Trigger an event that updates status
-3. Check Discord
-
-**Expected Results:**
-- [ ] Status line added back
-- [ ] Added in correct location
-- [ ] No duplicate status lines
+- [X] Only ONE Status line exists at any time
+- [X] Previous status replaced, not appended
+- [X] Status line in correct location (after Reviewers)
 
 ---
 
@@ -485,30 +425,30 @@ After completing all tests, verify:
 
 ### Functionality
 - [ ] All PR states handled correctly
-- [ ] Status transitions work as expected
+- [X] Status transitions work as expected
 - [ ] Reviewers added/removed correctly
-- [ ] Review comments appear in thread
+- [X] Review comments appear in thread
 - [ ] Merge/close events handled
 - [ ] Thread management works (creation, closure)
 
 ### Message Formatting
-- [ ] No link embeds (flags: 4 working)
-- [ ] @ mentions work correctly
+- [X] No link embeds (flags: 4 working)
+- [X] @ mentions work correctly
 - [ ] Emojis display properly
-- [ ] Markdown formatting correct
-- [ ] Long content handled gracefully
+- [X] Markdown formatting correct
+- [X] Long content handled gracefully
 
 ### Error Handling
-- [ ] Missing metadata handled gracefully
-- [ ] Deleted messages don't crash workflow
-- [ ] Missing user mappings handled
-- [ ] Network errors logged but don't fail workflow
+- [X] Missing metadata handled gracefully
+- [X] Deleted messages don't crash workflow
+- [X] Missing user mappings handled
+- [X] Network errors logged but don't fail workflow
 
 ### Edge Cases
-- [ ] Multiple simultaneous events handled
-- [ ] Special characters work
-- [ ] Very long titles handled
-- [ ] Empty review bodies handled
+- [X] Multiple simultaneous events handled
+- [X] Special characters work
+- [X] Very long titles handled
+- [X] Empty review bodies handled
 
 ## Common Issues to Watch For
 
@@ -535,3 +475,5 @@ After completing all tests, verify:
 ## Missing tests
 When a PR has been approved but then gets added to, the status needs to return to in review and the reviewers notified again and rerequested on the pr
 The '✅ APPROVED by <person>' line is duplicating on the parent after multiple times - those were supposed to be placed after the Status: <> message and update/overwrite one another
+Rerequesting a reviewer should have a different message than adding a reviewer
+The reactions are mutually exclusive - only one should be active at a time
