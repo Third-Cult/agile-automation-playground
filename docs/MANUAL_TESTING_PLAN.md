@@ -26,7 +26,7 @@ Before starting, ensure you have:
 
 ## Test Scenarios
 
-### Test 1: PR Opened (Draft with Reviewers) -
+### Test 1: PR Opened (Draft with Reviewers)
 
 **Steps:**
 1. Create a new branch: `test-draft-pr`
