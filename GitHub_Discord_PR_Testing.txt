@@ -192,10 +192,10 @@ Before testing, ensure:
 3. Check Discord
 
 **Expected Results:**
-- [ ] ✅ reaction added
-- [ ] Thread message shows: "> Approved without comment"
-- [ ] Status updated to: "Status: Approved"
-- [ ] Merge instructions still shown
+- [ ] ✅ reaction added (can't confirm because status didn't change when changes were made to the PR)
+- [X] Thread message shows: "> Approved without comment"
+- [X] Status updated to: "Status: Approved"
+- [X] Merge instructions still shown
 
 ---
 
@@ -532,8 +532,5 @@ After completing all tests, verify:
 
 ## Notes
 
-- Test in a dedicated test repository to avoid cluttering production channels
-- Use test Discord channel separate from production
-- Keep test PRs open until all tests complete, then clean up
-- Document any failures or unexpected behavior
-- Check GitHub Actions workflow logs for detailed error messages
+## Missing tests
+When a PR has been approved but then gets added to, the status needs to return to in review and the reviewers notified again and rerequested on the pr
