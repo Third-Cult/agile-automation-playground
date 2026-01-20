@@ -338,12 +338,12 @@ Before starting, ensure you have:
 4. Wait for workflow to complete
 
 **Expected Results:**
-- [ ] Thread message posted:
+- [X] Thread message posted:
   - Format: ":closed_book: [PR #X](url) has been closed by @closer"
   - Closing comment included if provided (and recent)
-- [ ] Thread locked
-- [ ] Parent message status updated: ":closed_book: Closed by @closer"
-- [ ] Workflow completes successfully
+- [X] Thread locked
+- [X] Parent message status updated: ":closed_book: Closed by @closer"
+- [X] Workflow completes successfully
 
 **Verification:**
 - Check thread for close message
