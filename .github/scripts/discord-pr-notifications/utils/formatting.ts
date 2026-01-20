@@ -30,7 +30,7 @@ export function buildPRMessage(params: {
   const { prNumber, prTitle, prUrl, headBranch, baseBranch, author, prDescription, reviewerLogins, isDraft, userMapping } = params;
 
   let message = `## [PR #${prNumber}: ${prTitle}](${prUrl})\n`;
-  message += `# \`${headBranch}\` -> \`${baseBranch}\`\n\n`;
+  message += `-# \`${headBranch}\` -> \`${baseBranch}\`\n\n`;
   message += `**Author:** ${mapToDiscord(author, userMapping)}\n`;
 
   // Add PR description if it exists
@@ -43,9 +43,11 @@ export function buildPRMessage(params: {
     const reviewerMentions = reviewerLogins.map((login) => mapToDiscord(login, userMapping)).join(' ');
     message += `**Reviewers:** ${reviewerMentions}\n`;
   } else {
-    // ANSI warning format
+    // ANSI warning format in code block
+    message += `\`\`\`ansi\n`;
     message += `\u001b[2;33mWARNING::No reviewers assigned:\u001b[0m\n`;
-    message += `PR has to be reviewed by another member before merging.\n\n`;
+    message += `PR has to be reviewed by another member before merging.\n`;
+    message += `\`\`\`\n\n`;
   }
 
   // Status - check if draft
@@ -101,8 +103,10 @@ export function updateReviewersLine(
     const reviewerMentions = reviewerLogins.map((login) => mapToDiscord(login, userMapping)).join(' ');
     rebuiltLines.push(`**Reviewers:** ${reviewerMentions}`);
   } else {
+    rebuiltLines.push(`\`\`\`ansi\n`);
     rebuiltLines.push(`\u001b[2;33mWARNING::No reviewers assigned:\u001b[0m`);
     rebuiltLines.push(`PR has to be reviewed by another member before merging.\n`);
+    rebuiltLines.push(`\`\`\`\n\n`);
   }
 
   rebuiltLines.push(...afterReviewers);
