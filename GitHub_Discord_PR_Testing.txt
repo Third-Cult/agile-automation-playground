@@ -313,7 +313,7 @@ Not possible to test - GitHub doesn't allow request changes without comment
 #### Test 7.1: PR Without Metadata Comment
 **Steps:**
 1. Manually delete the metadata comment from a PR
-2. Trigger any event (add reviewer, approve, etc.)
+2. Trigger any event (add reviewer, approve, etc.) - did this
 3. Check workflow logs
 
 **Expected Results:**
