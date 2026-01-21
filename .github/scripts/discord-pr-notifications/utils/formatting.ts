@@ -30,7 +30,7 @@ export function buildPRMessage(params: {
   const { prNumber, prTitle, prUrl, headBranch, baseBranch, author, prDescription, reviewerLogins, isDraft, userMapping } = params;
 
   let message = `## [PR #${prNumber}: ${prTitle}](${prUrl})\n`;
-  message += `- \`${headBranch}\` -> \`${baseBranch}\`\n\n`;
+  message += `\`${headBranch}\` -> \`${baseBranch}\`\n\n`;
   message += `**Author:** ${mapToDiscord(author, userMapping)}\n`;
 
   // Add PR description if it exists
