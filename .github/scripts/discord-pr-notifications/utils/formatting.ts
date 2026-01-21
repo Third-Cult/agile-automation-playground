@@ -50,9 +50,9 @@ export function buildPRMessage(params: {
 
   // Status - check if draft
   if (isDraft) {
-    message += `**Status**: :pencil: Draft - In Progress\n`;
+    message += `\n**Status**: :pencil: Draft - In Progress\n`;
   } else {
-    message += `**Status**: :eyes: Ready for Review\n`;
+    message += `\n**Status**: :eyes: Ready for Review\n`;
   }
 
   return message;

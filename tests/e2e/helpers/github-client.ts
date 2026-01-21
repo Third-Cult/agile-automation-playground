@@ -333,6 +333,18 @@ export class GitHubClient {
   }
 
   /**
+   * Get PR author login
+   */
+  async getPRAuthor(prNumber: number): Promise<string> {
+    const { data } = await this.octokit.pulls.get({
+      owner: this.owner,
+      repo: this.repo,
+      pull_number: prNumber,
+    });
+    return data.user.login;
+  }
+
+  /**
    * Get PR comments
    */
   async getPRComments(prNumber: number): Promise<Array<{ id: number; body: string; user: { login: string } }>> {
