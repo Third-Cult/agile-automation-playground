@@ -225,6 +225,123 @@ export async function verifyThreadMessage(
 }
 
 /**
+ * Verify Discord message formatting for PR opened (ready) messages without reviewers
+ * This verifies the exact structure including newlines between sections
+ */
+export function verifyPROpenedReadyFormat(
+  message: DiscordMessage | null,
+  prNumber: number,
+  prTitle: string,
+  prUrl: string,
+  headBranch: string,
+  baseBranch: string,
+  author: string,
+  prDescription?: string
+): { passed: boolean; errors: string[] } {
+  const errors: string[] = [];
+
+  if (!message) {
+    return {
+      passed: false,
+      errors: ['Discord message not found'],
+    };
+  }
+
+  const content = message.content;
+  const lines = content.split('\n');
+
+  // Expected structure (same as draft, but with "Ready for Review" status):
+  // Line 0: ## [PR #X: Title](url)
+  // Line 1: `headBranch` -> `baseBranch`
+  // Line 2: (empty line)
+  // Line 3: **Author:** @username
+  // Lines 4-N: Description (if exists) + empty line
+  // Next: ⚠️ WARNING::No reviewers assigned:
+  // Next: PR has to be reviewed by another member before merging.
+  // Next: (empty line)
+  // Last: **Status**: :eyes: Ready for Review
+
+  let currentLine = 0;
+
+  // Verify header format: ## [PR #X: Title](url)
+  const headerPattern = new RegExp(`^## \\[PR #${prNumber}: ${prTitle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\]\\(${prUrl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\)$`);
+  if (!headerPattern.test(lines[currentLine] || '')) {
+    errors.push(`Line ${currentLine} (Header): Expected "## [PR #${prNumber}: ${prTitle}](${prUrl})", Got: "${lines[currentLine]}"`);
+  }
+  currentLine++;
+
+  // Verify branch format: `headBranch` -> `baseBranch`
+  const branchPattern = new RegExp(`^\`${headBranch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\` -> \`${baseBranch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\`$`);
+  if (!branchPattern.test(lines[currentLine] || '')) {
+    errors.push(`Line ${currentLine} (Branch): Expected "\`${headBranch}\` -> \`${baseBranch}\`", Got: "${lines[currentLine]}"`);
+  }
+  currentLine++;
+
+  // Verify empty line after branch
+  if (lines[currentLine]?.trim() !== '') {
+    errors.push(`Line ${currentLine}: Expected empty line after branch, Got: "${lines[currentLine]}"`);
+  }
+  currentLine++;
+
+  // Verify Author format: **Author:** @username or <@discordId>
+  const authorLine = lines[currentLine] || '';
+  if (!authorLine.startsWith('**Author:**')) {
+    errors.push(`Line ${currentLine} (Author): Expected line starting with "**Author:**", Got: "${authorLine}"`);
+  } else if (!authorLine.includes('@')) {
+    errors.push(`Line ${currentLine} (Author): Expected author mention (should contain @), Got: "${authorLine}"`);
+  }
+  currentLine++;
+
+  // Verify description if provided
+  if (prDescription && prDescription.trim() !== '') {
+    const descriptionLines = prDescription.split('\n');
+    for (let i = 0; i < descriptionLines.length; i++) {
+      if (lines[currentLine]?.trim() !== descriptionLines[i]?.trim()) {
+        errors.push(`Line ${currentLine} (Description line ${i + 1}): Expected "${descriptionLines[i]}", Got: "${lines[currentLine]}"`);
+      }
+      currentLine++;
+    }
+    
+    // Verify empty line after description
+    if (lines[currentLine]?.trim() !== '') {
+      errors.push(`Line ${currentLine}: Expected empty line after description, Got: "${lines[currentLine]}"`);
+    }
+    currentLine++;
+  }
+
+  // Verify warning format (no reviewers): ⚠️ WARNING::No reviewers assigned:
+  const warningPattern = /^⚠️ WARNING::No reviewers assigned:$/;
+  if (!warningPattern.test(lines[currentLine] || '')) {
+    errors.push(`Line ${currentLine} (Warning): Expected "⚠️ WARNING::No reviewers assigned:", Got: "${lines[currentLine]}"`);
+  }
+  currentLine++;
+
+  // Verify warning message: PR has to be reviewed by another member before merging.
+  const warningMessage = 'PR has to be reviewed by another member before merging.';
+  if ((lines[currentLine] || '').trim() !== warningMessage) {
+    errors.push(`Line ${currentLine} (Warning message): Expected "${warningMessage}", Got: "${lines[currentLine]}"`);
+  }
+  currentLine++;
+
+  // Verify empty line before status
+  if (lines[currentLine]?.trim() !== '') {
+    errors.push(`Line ${currentLine}: Expected empty line before status, Got: "${lines[currentLine]}"`);
+  }
+  currentLine++;
+
+  // Verify status format: **Status**: :eyes: Ready for Review
+  const statusPattern = /^\*\*Status\*\*: :eyes: Ready for Review$/;
+  if (!statusPattern.test(lines[currentLine] || '')) {
+    errors.push(`Line ${currentLine} (Status): Expected "**Status**: :eyes: Ready for Review", Got: "${lines[currentLine]}"`);
+  }
+
+  return {
+    passed: errors.length === 0,
+    errors,
+  };
+}
+
+/**
  * Verify Discord message formatting for PR opened (draft) messages
  * This verifies the exact structure including newlines between sections
  */

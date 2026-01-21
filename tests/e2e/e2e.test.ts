@@ -10,6 +10,7 @@ import {
   verifyReaction,
   verifyThreadState,
   verifyPROpenedDraftFormat,
+  verifyPROpenedReadyFormat,
 } from './helpers/verification';
 import { TestDataGenerator } from './fixtures/test-data';
 
@@ -405,6 +406,39 @@ describe('E2E Tests - Discord PR Notifications', () => {
           console.log('Actual message content:', discordMessage.content);
         } else {
           console.log(`✓ Message content verified (WARNING found)\n`);
+        }
+
+        // Get PR author for formatting verification
+        console.log('📋 Fetching PR author for formatting verification...');
+        const author = await github.getPRAuthor(pr.number);
+        console.log(`✓ PR author: ${author}\n`);
+
+        // Verify message formatting
+        console.log('✅ Verifying message formatting...');
+        const formatCheck = verifyPROpenedReadyFormat(
+          discordMessage,
+          pr.number,
+          prTitle,
+          pr.url,
+          branchName,
+          defaultBranch,
+          author,
+          prDescription
+        );
+
+        if (!formatCheck.passed) {
+          console.error('❌ Message formatting verification failed:');
+          formatCheck.errors.forEach((error) => {
+            console.error(`  - ${error}`);
+          });
+          console.log('\nActual message content:');
+          console.log('---');
+          console.log(discordMessage.content);
+          console.log('---\n');
+          // Throw error with all formatting issues
+          throw new Error(`Message formatting verification failed:\n${formatCheck.errors.map(e => `  - ${e}`).join('\n')}\n\nActual message:\n${discordMessage.content}`);
+        } else {
+          console.log(`✓ Message formatting verified\n`);
         }
 
         // Wait a bit more and check metadata for thread ID
