@@ -45,7 +45,7 @@ export function buildPRMessage(params: {
   } else {
     // ANSI warning format in code block
     message += `⚠️ WARNING::No reviewers assigned:\n`;
-    message += `PR has to be reviewed by another member before merging.\n`;
+    message += `PR has to be reviewed by another member before merging.\n\n`;
   }
 
   // Status - check if draft
