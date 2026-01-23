@@ -5,7 +5,10 @@ dotenv.config();
 
 export interface E2EConfig {
   github: {
-    token: string;
+    token?: string; // Optional if app is used
+    appId?: number;
+    appPrivateKey?: string;
+    installationId?: number; // Optional - will be auto-discovered if not provided
     owner: string;
     repo: string;
   };
@@ -42,10 +45,53 @@ function getEnvVarBoolean(name: string, defaultValue: boolean): boolean {
   return value ? value.toLowerCase() === 'true' : defaultValue;
 }
 
+function getEnvVarOptional(name: string): string | undefined {
+  return process.env[name];
+}
+
+function getEnvVarNumberOptional(name: string): number | undefined {
+  const value = process.env[name];
+  return value ? parseInt(value, 10) : undefined;
+}
+
 export function loadConfig(): E2EConfig {
+  const token = getEnvVarOptional('GITHUB_TOKEN');
+  const appId = getEnvVarNumberOptional('GITHUB_APP_ID');
+  const appPrivateKey = getEnvVarOptional('GITHUB_APP_PRIVATE_KEY');
+  const installationId = getEnvVarNumberOptional('GITHUB_APP_INSTALLATION_ID');
+
+  // Validate that either PAT or App config is provided
+  const hasPAT = !!token;
+  const hasApp = !!(appId && appPrivateKey);
+
+  if (!hasPAT && !hasApp) {
+    throw new Error(
+      'Either GITHUB_TOKEN or GitHub App configuration (GITHUB_APP_ID and GITHUB_APP_PRIVATE_KEY) is required. ' +
+      'If using GitHub App, provide GITHUB_APP_ID and GITHUB_APP_PRIVATE_KEY. ' +
+      'GITHUB_APP_INSTALLATION_ID is optional and will be auto-discovered if not provided.'
+    );
+  }
+
+  // Handle base64-encoded private key (common in secret managers)
+  let processedPrivateKey = appPrivateKey;
+  if (appPrivateKey && !appPrivateKey.includes('-----BEGIN')) {
+    // Assume it's base64-encoded, decode it
+    try {
+      processedPrivateKey = Buffer.from(appPrivateKey, 'base64').toString('utf-8');
+    } catch (error) {
+      throw new Error(
+        'GITHUB_APP_PRIVATE_KEY appears to be base64-encoded but could not be decoded. ' +
+        'Please provide either a raw PEM-formatted key or a valid base64-encoded key.'
+      );
+    }
+  }
+
   return {
     github: {
-      token: getEnvVar('GITHUB_TOKEN'),
+      token,
+      appId,
+      appPrivateKey: processedPrivateKey,
+      installationId,
       owner: getEnvVar('GITHUB_REPO_OWNER'),
       repo: getEnvVar('GITHUB_REPO_NAME'),
     },

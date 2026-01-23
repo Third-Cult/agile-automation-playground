@@ -1,5 +1,6 @@
 import { Octokit } from '@octokit/rest';
 import type { E2EConfig } from '../config';
+import { createAuthenticatedOctokit } from './github-app-auth';
 
 export interface PRInfo {
   number: number;
@@ -31,10 +32,18 @@ export class GitHubClient {
   private owner: string;
   private repo: string;
 
-  constructor(config: E2EConfig) {
-    this.octokit = new Octokit({ auth: config.github.token });
-    this.owner = config.github.owner;
-    this.repo = config.github.repo;
+  private constructor(octokit: Octokit, owner: string, repo: string) {
+    this.octokit = octokit;
+    this.owner = owner;
+    this.repo = repo;
+  }
+
+  /**
+   * Create a new GitHubClient instance (async factory method)
+   */
+  static async create(config: E2EConfig): Promise<GitHubClient> {
+    const octokit = await createAuthenticatedOctokit(config.github);
+    return new GitHubClient(octokit, config.github.owner, config.github.repo);
   }
 
   /**
@@ -229,6 +238,13 @@ export class GitHubClient {
 
   /**
    * Submit a review
+   * 
+   * Note: This method uses the GitHub App's authentication, so the review will be
+   * submitted by the app bot, not by a specific user. This is intentional for e2e tests
+   * - reviewers are assigned using real GitHub usernames (for Discord mapping),
+   * - but review actions (approve, request changes, comment) are performed by the app.
+   * 
+   * @returns ReviewInfo including the login of the user/app that submitted the review
    */
   async submitReview(
     prNumber: number,

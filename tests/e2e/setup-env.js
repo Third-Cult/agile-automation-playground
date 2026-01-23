@@ -52,11 +52,18 @@ function checkExistingConfig() {
   console.log('\n📋 Current Configuration Status:\n');
   
   const required = {
-    'GITHUB_TOKEN': 'GitHub Personal Access Token',
     'GITHUB_REPO_OWNER': 'GitHub Repository Owner',
     'GITHUB_REPO_NAME': 'GitHub Repository Name',
     'DISCORD_BOT_TOKEN': 'Discord Bot Token',
     'DISCORD_TEST_CHANNEL_ID': 'Discord Test Channel ID',
+  };
+  
+  // GitHub auth - either PAT or App (at least one required)
+  const githubAuth = {
+    'GITHUB_TOKEN': 'GitHub Personal Access Token (alternative to App)',
+    'GITHUB_APP_ID': 'GitHub App ID (alternative to PAT)',
+    'GITHUB_APP_PRIVATE_KEY': 'GitHub App Private Key (alternative to PAT)',
+    'GITHUB_APP_INSTALLATION_ID': 'GitHub App Installation ID (optional, auto-discovered)',
   };
   
   const optional = {
@@ -77,6 +84,41 @@ function checkExistingConfig() {
     } else {
       console.log(`  ❌ ${key}: Not set (${description})`);
       allConfigured = false;
+    }
+  }
+  
+  console.log('\nGitHub Authentication (either PAT or App required):');
+  const hasPAT = !!(existing.GITHUB_TOKEN || process.env.GITHUB_TOKEN);
+  const hasAppId = !!(existing.GITHUB_APP_ID || process.env.GITHUB_APP_ID);
+  const hasAppKey = !!(existing.GITHUB_APP_PRIVATE_KEY || process.env.GITHUB_APP_PRIVATE_KEY);
+  const hasApp = hasAppId && hasAppKey;
+  
+  if (hasPAT) {
+    console.log('  ✅ Using GitHub Personal Access Token');
+  } else if (hasApp) {
+    console.log('  ✅ Using GitHub App authentication');
+    if (existing.GITHUB_APP_INSTALLATION_ID || process.env.GITHUB_APP_INSTALLATION_ID) {
+      console.log('  ✅ Installation ID configured (will be auto-discovered if not provided)');
+    } else {
+      console.log('  ℹ️  Installation ID not set (will be auto-discovered)');
+    }
+  } else {
+    console.log('  ❌ No GitHub authentication method configured');
+    allConfigured = false;
+  }
+  
+  // Show GitHub auth variables status
+  for (const [key, description] of Object.entries(githubAuth)) {
+    const value = existing[key] || process.env[key];
+    if (value) {
+      if (key.includes('PRIVATE_KEY')) {
+        console.log(`  ℹ️  ${key}: [REDACTED]`);
+      } else if (key.includes('TOKEN') || key.includes('ID')) {
+        const masked = value.length > 10 ? `${value.substring(0, 6)}...` : '***';
+        console.log(`  ℹ️  ${key}: ${masked}`);
+      } else {
+        console.log(`  ℹ️  ${key}: Set`);
+      }
     }
   }
   
@@ -114,29 +156,87 @@ async function interactiveSetup() {
   
   const config = { ...existing };
   
-  // GitHub Token
-  if (!config.GITHUB_TOKEN && !process.env.GITHUB_TOKEN) {
-    console.log('GitHub Personal Access Token:');
-    console.log('  You can use either a Classic or Fine-grained token:');
-    console.log('');
-    console.log('  Classic Token:');
-    console.log('    1. Go to: https://github.com/settings/tokens');
-    console.log('    2. Click "Generate new token" → "Generate new token (classic)"');
-    console.log('    3. Select "repo" scope');
-    console.log('    4. Copy the token (starts with ghp_)');
-    console.log('');
-    console.log('  Fine-grained Token:');
-    console.log('    1. Go to: https://github.com/settings/tokens');
-    console.log('    2. Click "Generate new token" → "Generate new token (fine-grained)"');
-    console.log('    3. Select your repository');
-    console.log('    4. Set permissions:');
-    console.log('       - Contents: Read and write');
-    console.log('       - Pull requests: Read and write');
-    console.log('       - Issues: Read');
-    console.log('       - Actions: Read');
-    console.log('    5. Copy the token (starts with github_pat_)');
-    const token = await question('\nEnter your GitHub token (ghp_... or github_pat_...): ');
-    if (token.trim()) config.GITHUB_TOKEN = token.trim();
+  // GitHub Authentication - choose between PAT or App
+  const hasPAT = !!(config.GITHUB_TOKEN || process.env.GITHUB_TOKEN);
+  const hasApp = !!(config.GITHUB_APP_ID && config.GITHUB_APP_PRIVATE_KEY) ||
+                 !!(process.env.GITHUB_APP_ID && process.env.GITHUB_APP_PRIVATE_KEY);
+  
+  if (!hasPAT && !hasApp) {
+    console.log('GitHub Authentication:');
+    console.log('  You can use either a Personal Access Token (PAT) or GitHub App.');
+    console.log('  GitHub App is recommended for better security and scalability.\n');
+    console.log('  Choose authentication method:');
+    console.log('    1. Personal Access Token (simpler, but requires user account)');
+    console.log('    2. GitHub App (recommended, works independently)\n');
+    
+    const authChoice = await question('Enter choice (1 or 2, default: 2): ');
+    const useApp = authChoice.trim() === '' || authChoice.trim() === '2';
+    
+    if (useApp) {
+      // GitHub App setup
+      console.log('\n📱 Setting up GitHub App authentication:\n');
+      console.log('  To create a GitHub App:');
+      console.log('    1. Go to: https://github.com/settings/apps/new');
+      console.log('       (Make sure you create a "GitHub App", not an "OAuth App")');
+      console.log('    2. Fill in:');
+      console.log('       - Name: Your app name (e.g., "E2E Test Bot")');
+      console.log('       - Homepage URL: Your repository URL');
+      console.log('       - Webhook: Leave unchecked (not needed)');
+      console.log('    3. Set permissions:');
+      console.log('       - Contents: Read and write');
+      console.log('       - Pull requests: Read and write');
+      console.log('       - Issues: Read');
+      console.log('       - Actions: Read');
+      console.log('    4. Click "Create GitHub App"');
+      console.log('    5. On the app page:');
+      console.log('       - Copy the "App ID" (number)');
+      console.log('       - Click "Generate a private key" and save the .pem file');
+      console.log('    6. Install the app on your repository:');
+      console.log('       - Click "Install App"');
+      console.log('       - Select your repository');
+      console.log('       - Click "Install"');
+      console.log('       - Note the Installation ID from the URL (optional, will be auto-discovered)\n');
+      
+      const appId = await question('Enter GitHub App ID (number): ');
+      if (appId.trim()) {
+        config.GITHUB_APP_ID = appId.trim();
+      }
+      
+      console.log('\n  Private Key:');
+      console.log('    You can provide the key in two formats:');
+      console.log('    1. Raw PEM format (copy entire content including -----BEGIN/END-----)');
+      console.log('    2. Base64-encoded (common in secret managers)\n');
+      const privateKey = await question('Enter GitHub App Private Key (PEM or base64): ');
+      if (privateKey.trim()) {
+        config.GITHUB_APP_PRIVATE_KEY = privateKey.trim();
+      }
+      
+      const installationId = await question('\nEnter Installation ID (optional, press Enter to auto-discover): ');
+      if (installationId.trim()) {
+        config.GITHUB_APP_INSTALLATION_ID = installationId.trim();
+      }
+    } else {
+      // PAT setup
+      console.log('\n🔑 Setting up Personal Access Token:\n');
+      console.log('  Classic Token:');
+      console.log('    1. Go to: https://github.com/settings/tokens');
+      console.log('    2. Click "Generate new token" → "Generate new token (classic)"');
+      console.log('    3. Select "repo" scope');
+      console.log('    4. Copy the token (starts with ghp_)');
+      console.log('');
+      console.log('  Fine-grained Token:');
+      console.log('    1. Go to: https://github.com/settings/tokens');
+      console.log('    2. Click "Generate new token" → "Generate new token (fine-grained)"');
+      console.log('    3. Select your repository');
+      console.log('    4. Set permissions:');
+      console.log('       - Contents: Read and write');
+      console.log('       - Pull requests: Read and write');
+      console.log('       - Issues: Read');
+      console.log('       - Actions: Read');
+      console.log('    5. Copy the token (starts with github_pat_)');
+      const token = await question('\nEnter your GitHub token (ghp_... or github_pat_...): ');
+      if (token.trim()) config.GITHUB_TOKEN = token.trim();
+    }
   }
   
   // GitHub Repo Owner
@@ -186,7 +286,18 @@ async function interactiveSetup() {
   envLines.push('# Generated by setup-env.js');
   envLines.push('');
   envLines.push('# GitHub Configuration');
-  envLines.push(`GITHUB_TOKEN=${config.GITHUB_TOKEN || ''}`);
+  if (config.GITHUB_TOKEN) {
+    envLines.push(`GITHUB_TOKEN=${config.GITHUB_TOKEN}`);
+  }
+  if (config.GITHUB_APP_ID) {
+    envLines.push(`GITHUB_APP_ID=${config.GITHUB_APP_ID}`);
+  }
+  if (config.GITHUB_APP_PRIVATE_KEY) {
+    envLines.push(`GITHUB_APP_PRIVATE_KEY=${config.GITHUB_APP_PRIVATE_KEY}`);
+  }
+  if (config.GITHUB_APP_INSTALLATION_ID) {
+    envLines.push(`GITHUB_APP_INSTALLATION_ID=${config.GITHUB_APP_INSTALLATION_ID}`);
+  }
   envLines.push(`GITHUB_REPO_OWNER=${config.GITHUB_REPO_OWNER || ''}`);
   envLines.push(`GITHUB_REPO_NAME=${config.GITHUB_REPO_NAME || ''}`);
   envLines.push('');

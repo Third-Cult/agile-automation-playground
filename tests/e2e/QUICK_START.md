@@ -25,26 +25,66 @@ This interactive script will:
 
 Before running the setup script, you'll need:
 
-### GitHub
-- **Personal Access Token** (Classic or Fine-grained): 
-  
-  **Classic Token:**
-  - Go to https://github.com/settings/tokens
-  - Click "Generate new token" → "Generate new token (classic)"
-  - Select `repo` scope
-  - Copy the token (starts with `ghp_`)
-  
-  **Fine-grained Token (Recommended):**
-  - Go to https://github.com/settings/tokens
-  - Click "Generate new token" → "Generate new token (fine-grained)"
-  - Select your repository
-  - Set permissions:
-    - **Contents**: Read and write
-    - **Pull requests**: Read and write
-    - **Issues**: Read
-    - **Actions**: Read
-  - Copy the token (starts with `github_pat_`)
+### GitHub Authentication
 
+You can use either a **Personal Access Token (PAT)** or a **GitHub App** (recommended).
+
+#### Option 1: GitHub App (Recommended)
+
+GitHub App is recommended for better security, scalability, and independence from user accounts.
+
+**Create a GitHub App:**
+1. Go to https://github.com/settings/apps/new
+   - **Important**: Make sure you're creating a "GitHub App" (not an "OAuth App")
+   - The page should say "New GitHub App" at the top
+   - If you see "Authorization callback URL" or "Client ID/Secret", you're on the OAuth App page - use the GitHub App page instead
+2. Fill in:
+   - **Name**: Your app name (e.g., "E2E Test Bot")
+   - **Homepage URL**: Your repository URL
+   - **Webhook**: Leave unchecked (not needed for e2e tests)
+3. Set permissions:
+   - **Contents**: Read and write
+   - **Pull requests**: Read and write
+   - **Issues**: Read
+   - **Actions**: Read
+4. Click "Create GitHub App"
+5. On the app page:
+   - Copy the **App ID** (number)
+   - Click "Generate a private key" and save the `.pem` file
+6. Install the app on your repository:
+   - Click "Install App"
+   - Select your repository
+   - Click "Install"
+   - Note the **Installation ID** from the URL (optional - will be auto-discovered if not provided)
+
+**You'll need:**
+- `GITHUB_APP_ID`: The App ID (number)
+- `GITHUB_APP_PRIVATE_KEY`: The private key (PEM format or base64-encoded)
+- `GITHUB_APP_INSTALLATION_ID`: Optional - will be auto-discovered if not provided
+
+#### Option 2: Personal Access Token
+
+**Classic Token:**
+- Go to https://github.com/settings/tokens
+- Click "Generate new token" → "Generate new token (classic)"
+- Select `repo` scope
+- Copy the token (starts with `ghp_`)
+
+**Fine-grained Token:**
+- Go to https://github.com/settings/tokens
+- Click "Generate new token" → "Generate new token (fine-grained)"
+- Select your repository
+- Set permissions:
+  - **Contents**: Read and write
+  - **Pull requests**: Read and write
+  - **Issues**: Read
+  - **Actions**: Read
+- Copy the token (starts with `github_pat_`)
+
+**You'll need:**
+- `GITHUB_TOKEN`: Your Personal Access Token
+
+#### Repository Information
 - **Repository Owner**: Your GitHub username or organization name
 - **Repository Name**: The name of your test repository
 

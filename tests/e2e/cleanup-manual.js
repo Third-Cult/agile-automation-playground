@@ -16,21 +16,45 @@
 
 require('dotenv').config();
 const { Octokit } = require('@octokit/rest');
+const { createAppAuth } = require('@octokit/auth-app');
 
 const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
+const GITHUB_APP_ID = process.env.GITHUB_APP_ID ? parseInt(process.env.GITHUB_APP_ID, 10) : undefined;
+const GITHUB_APP_PRIVATE_KEY = process.env.GITHUB_APP_PRIVATE_KEY;
+const GITHUB_APP_INSTALLATION_ID = process.env.GITHUB_APP_INSTALLATION_ID ? parseInt(process.env.GITHUB_APP_INSTALLATION_ID, 10) : undefined;
 const GITHUB_REPO_OWNER = process.env.GITHUB_REPO_OWNER;
 const GITHUB_REPO_NAME = process.env.GITHUB_REPO_NAME;
 const E2E_TEST_PREFIX = process.env.E2E_TEST_PREFIX || 'e2e-test';
 const DISCORD_BOT_TOKEN = process.env.DISCORD_BOT_TOKEN;
 const DISCORD_CHANNEL_ID = process.env.DISCORD_TEST_CHANNEL_ID || process.env.DISCORD_PR_CHANNEL_ID;
 
-if (!GITHUB_TOKEN || !GITHUB_REPO_OWNER || !GITHUB_REPO_NAME) {
+if (!GITHUB_REPO_OWNER || !GITHUB_REPO_NAME) {
   console.error('❌ Missing required environment variables:');
-  console.error('   GITHUB_TOKEN, GITHUB_REPO_OWNER, GITHUB_REPO_NAME');
+  console.error('   GITHUB_REPO_OWNER, GITHUB_REPO_NAME');
   process.exit(1);
 }
 
-const octokit = new Octokit({ auth: GITHUB_TOKEN });
+// Check authentication method
+const hasPAT = !!GITHUB_TOKEN;
+const hasApp = !!(GITHUB_APP_ID && GITHUB_APP_PRIVATE_KEY);
+
+if (!hasPAT && !hasApp) {
+  console.error('❌ Missing authentication:');
+  console.error('   Either GITHUB_TOKEN or GitHub App configuration (GITHUB_APP_ID and GITHUB_APP_PRIVATE_KEY) is required.');
+  process.exit(1);
+}
+
+// Process private key if base64 encoded
+let processedPrivateKey = GITHUB_APP_PRIVATE_KEY;
+if (GITHUB_APP_PRIVATE_KEY && !GITHUB_APP_PRIVATE_KEY.includes('-----BEGIN')) {
+  try {
+    processedPrivateKey = Buffer.from(GITHUB_APP_PRIVATE_KEY, 'base64').toString('utf-8');
+  } catch (error) {
+    console.warn('⚠️  Failed to decode base64 private key, using as-is');
+  }
+}
+
+let octokit;
 const DISCORD_API_BASE = 'https://discord.com/api/v10';
 
 /**
@@ -127,10 +151,70 @@ async function deleteDiscordThread(threadId) {
 }
 
 /**
+ * Auto-discover installation ID for a repository
+ */
+async function getInstallationId(appAuth, owner, repo) {
+  try {
+    const appAuthentication = await appAuth({ type: 'app' });
+    const tempOctokit = new Octokit({ auth: appAuthentication.token });
+    const { data } = await tempOctokit.apps.getRepoInstallation({ owner, repo });
+    return data.id;
+  } catch (error) {
+    if (error.status === 404) {
+      throw new Error(
+        `GitHub App is not installed on ${owner}/${repo}. ` +
+        `Please install the app on the repository or provide GITHUB_APP_INSTALLATION_ID.`
+      );
+    }
+    throw new Error(`Failed to discover installation ID for ${owner}/${repo}: ${error.message}`);
+  }
+}
+
+/**
+ * Initialize Octokit with authentication
+ */
+async function initializeOctokit() {
+  if (hasApp) {
+    try {
+      const appAuth = createAppAuth({
+        appId: GITHUB_APP_ID,
+        privateKey: processedPrivateKey,
+      });
+
+      let installationId = GITHUB_APP_INSTALLATION_ID;
+      if (!installationId) {
+        console.log(`🔍 Auto-discovering installation ID for ${GITHUB_REPO_OWNER}/${GITHUB_REPO_NAME}...`);
+        installationId = await getInstallationId(appAuth, GITHUB_REPO_OWNER, GITHUB_REPO_NAME);
+        console.log(`✓ Found installation ID: ${installationId}`);
+      }
+
+      const installationAuth = await appAuth({
+        type: 'installation',
+        installationId,
+      });
+
+      return new Octokit({ auth: installationAuth.token });
+    } catch (error) {
+      console.error('❌ Failed to authenticate with GitHub App:', error.message);
+      if (hasPAT) {
+        console.log('⚠️  Falling back to PAT authentication...');
+        return new Octokit({ auth: GITHUB_TOKEN });
+      }
+      throw error;
+    }
+  } else {
+    return new Octokit({ auth: GITHUB_TOKEN });
+  }
+}
+
+/**
  * Cleanup GitHub PRs and branches
  */
 async function cleanupGitHub() {
   console.log(`\n🔍 Searching for E2E test PRs in ${GITHUB_REPO_OWNER}/${GITHUB_REPO_NAME}...\n`);
+  
+  // Initialize Octokit
+  octokit = await initializeOctokit();
 
   try {
     // Get all open PRs
@@ -284,6 +368,12 @@ async function main() {
   console.log('This will clean up:');
   console.log('  - GitHub PRs and branches');
   console.log('  - Discord messages and threads (if configured)\n');
+  
+  if (hasApp) {
+    console.log(`Using GitHub App authentication (App ID: ${GITHUB_APP_ID})\n`);
+  } else {
+    console.log('Using PAT authentication\n');
+  }
 
   try {
     // Cleanup GitHub

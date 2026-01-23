@@ -34,6 +34,24 @@ import { TestDataGenerator } from './fixtures/test-data';
 // ✅ Test 14: PR Closed - Implemented
 // ✅ Test 15: PR Merged - Implemented
 
+/**
+ * E2E Testing Approach:
+ * 
+ * Reviewer Assignment:
+ * - Reviewers are assigned using real GitHub usernames (from E2E_TEST_REVIEWERS config)
+ * - This ensures Discord can correctly map GitHub usernames to Discord users for notifications
+ * 
+ * Review Actions:
+ * - Review actions (approve, request changes, comment) are performed by the GitHub App
+ * - This allows testing without requiring actual users to perform actions
+ * - The GitHub App submits reviews on behalf of the assigned reviewers
+ * 
+ * This approach enables:
+ * - Testing Discord username mapping functionality
+ * - Automated testing without user intervention
+ * - Independent test execution in any environment with proper GitHub App setup
+ */
+
 // E2E tests must run sequentially to avoid rate limits and resource conflicts
 describe('E2E Tests - Discord PR Notifications', () => {
   let config: ReturnType<typeof loadConfig>;
@@ -55,10 +73,10 @@ describe('E2E Tests - Discord PR Notifications', () => {
     }
   }
 
-  beforeEach(() => {
+  beforeEach(async () => {
     try {
       config = loadConfig();
-      github = new GitHubClient(config);
+      github = await GitHubClient.create(config);
       discord = new DiscordClient(config);
       testData = new TestDataGenerator(config.test.prefix);
     } catch (error) {
@@ -571,8 +589,10 @@ describe('E2E Tests - Discord PR Notifications', () => {
       console.log(`✓ Ready\n`);
 
       // Use first 2-3 reviewers from config
+      // Note: Reviewers are assigned using real GitHub usernames so Discord can map them correctly
       const reviewers = config.test.reviewers.slice(0, Math.min(3, config.test.reviewers.length));
-      console.log(`👥 Using reviewers: ${reviewers.join(', ')}\n`);
+      console.log(`👥 Using reviewers: ${reviewers.join(', ')}`);
+      console.log(`   (Reviewers assigned for Discord mapping)\n`);
 
       // Create ready PR with multiple reviewers
       console.log(`🔨 Creating ready PR with ${reviewers.length} reviewer(s)...`);
@@ -733,28 +753,31 @@ describe('E2E Tests - Discord PR Notifications', () => {
 
         // Verify thread was created
         console.log('✅ Verifying thread creation...');
+        let finalThreadId: string | undefined;
         if (discordMessage.thread) {
           expect(discordMessage.thread.id).toBeDefined();
-          console.log(`✓ Thread found in message object: ${discordMessage.thread.id}\n`);
+          finalThreadId = discordMessage.thread.id;
+          console.log(`✓ Thread found in message object: ${finalThreadId}\n`);
           const trackedIndex = testDiscordMessages.findIndex(m => m.messageId === discordMessage.id);
           if (trackedIndex >= 0) {
-            testDiscordMessages[trackedIndex].threadId = discordMessage.thread.id;
+            testDiscordMessages[trackedIndex].threadId = finalThreadId;
           }
         } else if (threadId) {
-          console.log(`✓ Thread ID from metadata (not in message object): ${threadId}\n`);
+          finalThreadId = threadId;
+          console.log(`✓ Thread ID from metadata (not in message object): ${finalThreadId}\n`);
           const trackedIndex = testDiscordMessages.findIndex(m => m.messageId === discordMessage.id);
           if (trackedIndex >= 0) {
-            testDiscordMessages[trackedIndex].threadId = threadId;
+            testDiscordMessages[trackedIndex].threadId = finalThreadId;
           }
           try {
-            console.log(`🔍 Verifying thread ${threadId} exists in Discord...`);
-            const thread = await discord.getThread(threadId);
+            console.log(`🔍 Verifying thread ${finalThreadId} exists in Discord...`);
+            const thread = await discord.getThread(finalThreadId);
             expect(thread).toBeDefined();
-            expect(thread.id).toBe(threadId);
+            expect(thread.id).toBe(finalThreadId);
             console.log(`✓ Thread verified\n`);
           } catch (error) {
-            console.error(`❌ Thread ${threadId} from metadata does not exist in Discord:`, error);
-            throw new Error(`Thread ${threadId} from metadata does not exist in Discord`);
+            console.error(`❌ Thread ${finalThreadId} from metadata does not exist in Discord:`, error);
+            throw new Error(`Thread ${finalThreadId} from metadata does not exist in Discord`);
           }
         } else {
           throw new Error('Thread was not created - neither message.thread nor metadata.thread_id found');
@@ -762,6 +785,56 @@ describe('E2E Tests - Discord PR Notifications', () => {
         
         if (!metadataCheck.passed) {
           console.warn('⚠️  Metadata not found, but Discord message and thread were created successfully');
+        }
+
+        // Verify that each reviewer received a thread message
+        if (finalThreadId && reviewers.length > 0) {
+          console.log(`🔍 Verifying thread messages for ${reviewers.length} reviewer(s)...`);
+          await wait(3000); // Give time for all thread messages to be sent
+          
+          const threadMessages = await discord.getThreadMessages(finalThreadId, 50);
+          console.log(`📋 Found ${threadMessages.length} thread message(s) total`);
+          
+          // Check for reviewer notification messages
+          // Each reviewer should get a message like ":bellhop: @reviewer - your review has been requested..."
+          const reviewerMessages: Array<{ reviewer: string; found: boolean; message?: string }> = [];
+          
+          for (const reviewer of reviewers) {
+            // Look for messages that mention this reviewer
+            // The message format is: ":bellhop: @reviewer - your review has been requested for [PR #X](url)"
+            const reviewerMessage = threadMessages.find((msg) => {
+              const content = msg.content.toLowerCase();
+              return (
+                (content.includes(reviewer.toLowerCase()) || content.includes('<@')) &&
+                (content.includes('review') || content.includes('bellhop') || content.includes('requested'))
+              );
+            });
+            
+            reviewerMessages.push({
+              reviewer,
+              found: !!reviewerMessage,
+              message: reviewerMessage?.content,
+            });
+            
+            if (reviewerMessage) {
+              console.log(`  ✓ Found message for reviewer: ${reviewer}`);
+            } else {
+              console.log(`  ❌ Missing message for reviewer: ${reviewer}`);
+            }
+          }
+          
+          // Verify all reviewers got messages
+          const missingReviewers = reviewerMessages.filter(rm => !rm.found).map(rm => rm.reviewer);
+          if (missingReviewers.length > 0) {
+            console.error(`\n❌ Missing thread messages for ${missingReviewers.length} reviewer(s): ${missingReviewers.join(', ')}`);
+            console.log('\nAll thread messages:');
+            threadMessages.forEach((msg, idx) => {
+              console.log(`  ${idx + 1}. ${msg.content.substring(0, 100)}...`);
+            });
+            throw new Error(`Test 3 failed: Missing thread messages for reviewer(s): ${missingReviewers.join(', ')}. Expected ${reviewers.length} reviewer notification(s), but only found ${reviewerMessages.filter(rm => rm.found).length}.`);
+          }
+          
+          console.log(`✓ All ${reviewers.length} reviewer(s) received thread messages\n`);
         }
         
         console.log('\n✅ Test 3 completed successfully!\n');
@@ -952,6 +1025,7 @@ describe('E2E Tests - Discord PR Notifications', () => {
       trackDiscordMessage(initialMessage);
 
       // Add reviewer
+      // Note: Reviewer is assigned using their real GitHub username so Discord can map them correctly
       const reviewer = config.test.reviewers[0];
       console.log(`👥 Adding reviewer: ${reviewer}...`);
       await github.requestReviewers(pr.number, [reviewer]);
@@ -1083,9 +1157,11 @@ describe('E2E Tests - Discord PR Notifications', () => {
       console.log(`✓ Ready\n`);
 
       const reviewer = config.test.reviewers[0];
-      console.log(`👥 Will test with reviewer: ${reviewer}\n`);
+      console.log(`👥 Will test with reviewer: ${reviewer}`);
+      console.log(`   (Reviewer assigned for Discord mapping)\n`);
 
       // Create PR with reviewer
+      // Note: Reviewer is assigned using their real GitHub username so Discord can map them correctly
       console.log(`🔨 Creating PR with reviewer: ${reviewer}...`);
       const pr = await github.createPR(
         prTitle,
@@ -1236,9 +1312,11 @@ describe('E2E Tests - Discord PR Notifications', () => {
       console.log(`✓ Ready\n`);
 
       const reviewer = config.test.reviewers[0];
-      console.log(`👥 Will test with reviewer: ${reviewer}\n`);
+      console.log(`👥 Will test with reviewer: ${reviewer}`);
+      console.log(`   (Reviewer assigned for Discord mapping; review will be submitted by GitHub App)\n`);
 
       // Create PR with reviewer
+      // Note: We assign the reviewer using their real GitHub username so Discord can map them correctly
       console.log(`🔨 Creating PR with reviewer: ${reviewer}...`);
       const pr = await github.createPR(
         prTitle,
@@ -1265,9 +1343,11 @@ describe('E2E Tests - Discord PR Notifications', () => {
       trackDiscordMessage(initialMessage);
 
       // Submit approval review
-      console.log(`✅ Submitting approval review from ${reviewer}...`);
-      await github.submitReview(pr.number, 'APPROVE', 'Looks good!');
-      console.log(`✓ Review submitted\n`);
+      // Note: The GitHub App submits the review (not the actual reviewer user)
+      // This allows testing without requiring the reviewer to actually perform actions
+      console.log(`✅ Submitting approval review (on behalf of ${reviewer}) via GitHub App...`);
+      const review = await github.submitReview(pr.number, 'APPROVE', 'Looks good!');
+      console.log(`✓ Review submitted by: ${review.user.login}\n`);
 
       // Wait for workflow (pull_request_review event)
       console.log('⏳ Waiting for workflow (pull_request_review event)...');
@@ -1388,9 +1468,11 @@ describe('E2E Tests - Discord PR Notifications', () => {
       console.log(`✓ Ready\n`);
 
       const reviewer = config.test.reviewers[0];
-      console.log(`👥 Will test with reviewer: ${reviewer}\n`);
+      console.log(`👥 Will test with reviewer: ${reviewer}`);
+      console.log(`   (Reviewer assigned for Discord mapping; review will be submitted by GitHub App)\n`);
 
       // Create PR with reviewer
+      // Note: We assign the reviewer using their real GitHub username so Discord can map them correctly
       console.log(`🔨 Creating PR with reviewer: ${reviewer}...`);
       const pr = await github.createPR(
         prTitle,
@@ -1417,9 +1499,11 @@ describe('E2E Tests - Discord PR Notifications', () => {
       trackDiscordMessage(initialMessage);
 
       // Submit changes requested review
-      console.log(`❌ Submitting changes requested review from ${reviewer}...`);
-      await github.submitReview(pr.number, 'REQUEST_CHANGES', 'Please fix these issues');
-      console.log(`✓ Review submitted\n`);
+      // Note: The GitHub App submits the review (not the actual reviewer user)
+      // This allows testing without requiring the reviewer to actually perform actions
+      console.log(`❌ Submitting changes requested review (on behalf of ${reviewer}) via GitHub App...`);
+      const review = await github.submitReview(pr.number, 'REQUEST_CHANGES', 'Please fix these issues');
+      console.log(`✓ Review submitted by: ${review.user.login}\n`);
 
       // Wait for workflow
       console.log('⏳ Waiting for workflow...');
@@ -1545,9 +1629,11 @@ describe('E2E Tests - Discord PR Notifications', () => {
       console.log(`✓ Ready\n`);
 
       const reviewer = config.test.reviewers[0];
-      console.log(`👥 Will test with reviewer: ${reviewer}\n`);
+      console.log(`👥 Will test with reviewer: ${reviewer}`);
+      console.log(`   (Reviewer assigned for Discord mapping; review will be submitted by GitHub App)\n`);
 
       // Create PR with reviewer
+      // Note: We assign the reviewer using their real GitHub username so Discord can map them correctly
       console.log(`🔨 Creating PR with reviewer: ${reviewer}...`);
       const pr = await github.createPR(
         prTitle,
@@ -1580,9 +1666,11 @@ describe('E2E Tests - Discord PR Notifications', () => {
       console.log(`  - Reactions: ${initialReactions.length}\n`);
 
       // Submit comment-only review
-      console.log(`💬 Submitting comment-only review from ${reviewer}...`);
-      await github.submitReview(pr.number, 'COMMENT', 'Just a comment');
-      console.log(`✓ Comment review submitted\n`);
+      // Note: The GitHub App submits the review (not the actual reviewer user)
+      // This allows testing without requiring the reviewer to actually perform actions
+      console.log(`💬 Submitting comment-only review (on behalf of ${reviewer}) via GitHub App...`);
+      const review = await github.submitReview(pr.number, 'COMMENT', 'Just a comment');
+      console.log(`✓ Comment review submitted by: ${review.user.login}\n`);
 
       // Wait a bit (workflow should complete quickly as it skips)
       console.log('⏳ Waiting (workflow should skip processing)...');
@@ -1658,9 +1746,11 @@ describe('E2E Tests - Discord PR Notifications', () => {
       console.log(`✓ Ready\n`);
 
       const reviewer = config.test.reviewers[0];
-      console.log(`👥 Will test with reviewer: ${reviewer}\n`);
+      console.log(`👥 Will test with reviewer: ${reviewer}`);
+      console.log(`   (Reviewer assigned for Discord mapping; review will be submitted by GitHub App)\n`);
 
       // Create PR with reviewer
+      // Note: We assign the reviewer using their real GitHub username so Discord can map them correctly
       console.log(`🔨 Creating PR with reviewer: ${reviewer}...`);
       const pr = await github.createPR(
         prTitle,
@@ -1680,9 +1770,11 @@ describe('E2E Tests - Discord PR Notifications', () => {
       console.log(`✓ Initial workflow completed\n`);
 
       // Submit changes requested review
-      console.log(`❌ Submitting changes requested review from ${reviewer}...`);
+      // Note: The GitHub App submits the review (not the actual reviewer user)
+      // This allows testing without requiring the reviewer to actually perform actions
+      console.log(`❌ Submitting changes requested review (on behalf of ${reviewer}) via GitHub App...`);
       const review = await github.submitReview(pr.number, 'REQUEST_CHANGES', 'Please fix');
-      console.log(`✓ Review submitted (ID: ${review.id})\n`);
+      console.log(`✓ Review submitted by: ${review.user.login} (ID: ${review.id})\n`);
 
       // Wait for workflow
       console.log('⏳ Waiting for workflow (changes requested)...');
@@ -1805,9 +1897,11 @@ describe('E2E Tests - Discord PR Notifications', () => {
       console.log(`✓ Ready\n`);
 
       const reviewer = config.test.reviewers[0];
-      console.log(`👥 Will test with reviewer: ${reviewer}\n`);
+      console.log(`👥 Will test with reviewer: ${reviewer}`);
+      console.log(`   (Reviewer assigned for Discord mapping; review will be submitted by GitHub App)\n`);
 
       // Create PR with reviewer
+      // Note: We assign the reviewer using their real GitHub username so Discord can map them correctly
       console.log(`🔨 Creating PR with reviewer: ${reviewer}...`);
       const pr = await github.createPR(
         prTitle,
@@ -1827,9 +1921,11 @@ describe('E2E Tests - Discord PR Notifications', () => {
       console.log(`✓ Initial workflow completed\n`);
 
       // Submit approval review
-      console.log(`✅ Submitting approval review from ${reviewer}...`);
+      // Note: The GitHub App submits the review (not the actual reviewer user)
+      // This allows testing without requiring the reviewer to actually perform actions
+      console.log(`✅ Submitting approval review (on behalf of ${reviewer}) via GitHub App...`);
       const review = await github.submitReview(pr.number, 'APPROVE', 'Looks good');
-      console.log(`✓ Review submitted (ID: ${review.id})\n`);
+      console.log(`✓ Review submitted by: ${review.user.login} (ID: ${review.id})\n`);
 
       // Wait for workflow
       console.log('⏳ Waiting for workflow (approval)...');
@@ -1919,9 +2015,11 @@ describe('E2E Tests - Discord PR Notifications', () => {
       console.log(`✓ Ready\n`);
 
       const reviewer = config.test.reviewers[0];
-      console.log(`👥 Will test with reviewer: ${reviewer}\n`);
+      console.log(`👥 Will test with reviewer: ${reviewer}`);
+      console.log(`   (Reviewer assigned for Discord mapping; review will be submitted by GitHub App)\n`);
 
       // Create PR with reviewer
+      // Note: We assign the reviewer using their real GitHub username so Discord can map them correctly
       console.log(`🔨 Creating PR with reviewer: ${reviewer}...`);
       const pr = await github.createPR(
         prTitle,
@@ -1941,9 +2039,11 @@ describe('E2E Tests - Discord PR Notifications', () => {
       console.log(`✓ Initial workflow completed\n`);
 
       // Submit approval review
-      console.log(`✅ Submitting approval review from ${reviewer}...`);
-      await github.submitReview(pr.number, 'APPROVE', 'Approved');
-      console.log(`✓ Review submitted\n`);
+      // Note: The GitHub App submits the review (not the actual reviewer user)
+      // This allows testing without requiring the reviewer to actually perform actions
+      console.log(`✅ Submitting approval review (on behalf of ${reviewer}) via GitHub App...`);
+      const review = await github.submitReview(pr.number, 'APPROVE', 'Approved');
+      console.log(`✓ Review submitted by: ${review.user.login}\n`);
 
       // Wait for workflow
       console.log('⏳ Waiting for workflow (approval)...');

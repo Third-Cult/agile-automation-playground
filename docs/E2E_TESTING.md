@@ -13,16 +13,21 @@ E2E tests verify that the system works correctly by interacting with live GitHub
    - Bot added and configured
    - Channel ID for PR notifications
    - Bot has required permissions
-3. **GitHub Personal Access Token (PAT)**:
-   - **Classic Token**: Create a PAT with `repo` scope
-   - **Fine-grained Token** (Recommended): Create with these permissions:
-     - Contents: Read and write
-     - Pull requests: Read and write
-     - Issues: Read
-     - Actions: Read
-   - Must have write access to the test repository
+3. **GitHub Authentication** (choose one):
+   - **GitHub App** (Recommended): Better security, scalability, and independence
+     - Create a GitHub App with required permissions
+     - Install the app on your repository
+     - See "GitHub App Setup" section below for details
+   - **Personal Access Token (PAT)**: Simpler but requires user account
+     - **Classic Token**: Create a PAT with `repo` scope
+     - **Fine-grained Token**: Create with these permissions:
+       - Contents: Read and write
+       - Pull requests: Read and write
+       - Issues: Read
+       - Actions: Read
+     - Must have write access to the test repository
 4. **Discord Bot Token**: Bot token for the Discord bot
-5. **Test Reviewers** (optional): GitHub usernames for testing reviewer scenarios
+5. **Test Reviewers** (optional): GitHub usernames for testing reviewer scenarios (not needed with GitHub App)
 
 ## Environment Setup
 
@@ -38,9 +43,16 @@ Create a `.env` file in the project root (or set environment variables):
 
 ```bash
 # GitHub Configuration
-# Token can be classic (ghp_...) or fine-grained (github_pat_...)
-GITHUB_TOKEN=ghp_your_personal_access_token_here
+# Option 1: GitHub App (Recommended)
+GITHUB_APP_ID=123456
+GITHUB_APP_PRIVATE_KEY=-----BEGIN RSA PRIVATE KEY-----\n...\n-----END RSA PRIVATE KEY-----
+# Or base64-encoded: GITHUB_APP_PRIVATE_KEY=LS0tLS1CRUdJTi...
+GITHUB_APP_INSTALLATION_ID=12345678  # Optional - will be auto-discovered if not provided
+
+# Option 2: Personal Access Token (Alternative)
+# GITHUB_TOKEN=ghp_your_personal_access_token_here
 # Or for fine-grained: GITHUB_TOKEN=github_pat_your_fine_grained_token_here
+
 GITHUB_REPO_OWNER=your-org-or-username
 GITHUB_REPO_NAME=your-test-repo
 
@@ -60,11 +72,62 @@ E2E_DISCORD_POLL_INTERVAL=2000
 E2E_DISCORD_POLL_TIMEOUT=120000
 
 # Optional: Test reviewers (comma-separated GitHub usernames)
-# Required for tests 3, 5-12
-E2E_TEST_REVIEWERS=reviewer1,reviewer2,reviewer3
+# Required for tests 3, 5-12 (when using PAT authentication)
+# Not needed with GitHub App - app can submit reviews directly
+# E2E_TEST_REVIEWERS=reviewer1,reviewer2,reviewer3
 ```
 
-### 3. GitHub Secrets
+### 3. GitHub App Setup (Recommended)
+
+If using GitHub App authentication (recommended), follow these steps:
+
+#### Create a GitHub App
+
+1. Go to https://github.com/settings/apps/new
+   - **Important**: Make sure you're creating a "GitHub App" (not an "OAuth App")
+   - The page should say "New GitHub App" at the top
+   - If you see "Authorization callback URL" or "Client ID/Secret", you're on the OAuth App page - use the GitHub App page instead
+   - GitHub Apps are for automation/API access; OAuth Apps are for user authentication flows
+2. Fill in the app details:
+   - **Name**: Choose a descriptive name (e.g., "E2E Test Bot")
+   - **Homepage URL**: Your repository URL
+   - **Webhook**: Leave unchecked (not needed for e2e tests)
+   - **Webhook URL**: Leave empty
+3. Set the following permissions:
+   - **Repository permissions**:
+     - **Contents**: Read and write
+     - **Pull requests**: Read and write
+     - **Issues**: Read
+     - **Actions**: Read
+4. Click "Create GitHub App"
+
+#### Get App Credentials
+
+1. On the app page, copy the **App ID** (a number)
+2. Scroll down and click "Generate a private key"
+3. Save the `.pem` file securely (you can only download it once)
+4. The private key can be used in two formats:
+   - **Raw PEM format**: Copy the entire content including `-----BEGIN RSA PRIVATE KEY-----` and `-----END RSA PRIVATE KEY-----`
+   - **Base64-encoded**: Encode the PEM content (common in secret managers)
+
+#### Install the App
+
+1. Click "Install App" on the app page
+2. Select your organization or user account
+3. Choose "Only select repositories" and select your test repository
+4. Click "Install"
+5. **Optional**: Note the Installation ID from the URL (e.g., `https://github.com/settings/installations/12345678` - the number is the Installation ID)
+   - This will be auto-discovered if not provided
+
+#### Benefits of GitHub App
+
+- ✅ **No user account dependency**: Works independently
+- ✅ **Better security**: Repository-scoped permissions
+- ✅ **Scalable**: Higher rate limits (5,000+ requests/hour)
+- ✅ **Auto-refreshing tokens**: No manual token management
+- ✅ **Can submit reviews**: App can approve/request changes on PRs
+
+### 4. GitHub Secrets
 
 Ensure the following secrets are configured in your GitHub repository:
 
