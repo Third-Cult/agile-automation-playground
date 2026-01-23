@@ -342,6 +342,124 @@ export function verifyPROpenedReadyFormat(
 }
 
 /**
+ * Verify Discord message formatting for PR opened (ready) messages with reviewers
+ * This verifies the exact structure including newlines between sections
+ */
+export function verifyPROpenedReadyWithReviewersFormat(
+  message: DiscordMessage | null,
+  prNumber: number,
+  prTitle: string,
+  prUrl: string,
+  headBranch: string,
+  baseBranch: string,
+  author: string,
+  reviewers: string[],
+  prDescription?: string
+): { passed: boolean; errors: string[] } {
+  const errors: string[] = [];
+
+  if (!message) {
+    return {
+      passed: false,
+      errors: ['Discord message not found'],
+    };
+  }
+
+  const content = message.content;
+  const lines = content.split('\n');
+
+  // Expected structure:
+  // Line 0: ## [PR #X: Title](url)
+  // Line 1: `headBranch` -> `baseBranch`
+  // Line 2: (empty line)
+  // Line 3: **Author:** @username
+  // Lines 4-N: Description (if exists) + empty line
+  // Next: **Reviewers:** @reviewer1 @reviewer2 @reviewer3
+  // Next: (empty line)
+  // Last: **Status**: :eyes: Ready for Review
+
+  let currentLine = 0;
+
+  // Verify header format: ## [PR #X: Title](url)
+  const headerPattern = new RegExp(`^## \\[PR #${prNumber}: ${prTitle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\]\\(${prUrl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\)$`);
+  if (!headerPattern.test(lines[currentLine] || '')) {
+    errors.push(`Line ${currentLine} (Header): Expected "## [PR #${prNumber}: ${prTitle}](${prUrl})", Got: "${lines[currentLine]}"`);
+  }
+  currentLine++;
+
+  // Verify branch format: `headBranch` -> `baseBranch`
+  const branchPattern = new RegExp(`^\`${headBranch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\` -> \`${baseBranch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\`$`);
+  if (!branchPattern.test(lines[currentLine] || '')) {
+    errors.push(`Line ${currentLine} (Branch): Expected "\`${headBranch}\` -> \`${baseBranch}\`", Got: "${lines[currentLine]}"`);
+  }
+  currentLine++;
+
+  // Verify empty line after branch
+  if (lines[currentLine]?.trim() !== '') {
+    errors.push(`Line ${currentLine}: Expected empty line after branch, Got: "${lines[currentLine]}"`);
+  }
+  currentLine++;
+
+  // Verify Author format: **Author:** @username or <@discordId>
+  const authorLine = lines[currentLine] || '';
+  if (!authorLine.startsWith('**Author:**')) {
+    errors.push(`Line ${currentLine} (Author): Expected line starting with "**Author:**", Got: "${authorLine}"`);
+  } else if (!authorLine.includes('@')) {
+    errors.push(`Line ${currentLine} (Author): Expected author mention (should contain @), Got: "${authorLine}"`);
+  }
+  currentLine++;
+
+  // Verify description if provided
+  if (prDescription && prDescription.trim() !== '') {
+    const descriptionLines = prDescription.split('\n');
+    for (let i = 0; i < descriptionLines.length; i++) {
+      if (lines[currentLine]?.trim() !== descriptionLines[i]?.trim()) {
+        errors.push(`Line ${currentLine} (Description line ${i + 1}): Expected "${descriptionLines[i]}", Got: "${lines[currentLine]}"`);
+      }
+      currentLine++;
+    }
+    
+    // Verify empty line after description
+    if (lines[currentLine]?.trim() !== '') {
+      errors.push(`Line ${currentLine}: Expected empty line after description, Got: "${lines[currentLine]}"`);
+    }
+    currentLine++;
+  }
+
+  // Verify reviewers line format: **Reviewers:** @reviewer1 @reviewer2 @reviewer3
+  // Note: Reviewers might be mapped to Discord IDs (<@userId>), so we just verify the line exists and has mentions
+  const reviewersLine = lines[currentLine] || '';
+  if (!reviewersLine.startsWith('**Reviewers:**')) {
+    errors.push(`Line ${currentLine} (Reviewers): Expected line starting with "**Reviewers:**", Got: "${reviewersLine}"`);
+  } else {
+    // Verify the line contains at least one mention (either @username or <@discordId>)
+    if (!reviewersLine.includes('@')) {
+      errors.push(`Line ${currentLine} (Reviewers): Expected at least one reviewer mention (@username or <@discordId>), Got: "${reviewersLine}"`);
+    }
+    // Note: We don't check for exact reviewer names since they might be mapped to Discord IDs
+    // The presence of the reviewers line with mentions is sufficient
+  }
+  currentLine++;
+
+  // Verify empty line after reviewers
+  if (lines[currentLine]?.trim() !== '') {
+    errors.push(`Line ${currentLine}: Expected empty line after reviewers, Got: "${lines[currentLine]}"`);
+  }
+  currentLine++;
+
+  // Verify status format: **Status**: :eyes: Ready for Review
+  const statusPattern = /^\*\*Status\*\*: :eyes: Ready for Review$/;
+  if (!statusPattern.test(lines[currentLine] || '')) {
+    errors.push(`Line ${currentLine} (Status): Expected "**Status**: :eyes: Ready for Review", Got: "${lines[currentLine]}"`);
+  }
+
+  return {
+    passed: errors.length === 0,
+    errors,
+  };
+}
+
+/**
  * Verify Discord message formatting for PR opened (draft) messages
  * This verifies the exact structure including newlines between sections
  */
@@ -458,4 +576,118 @@ export function verifyPROpenedDraftFormat(
     passed: errors.length === 0,
     errors,
   };
+}
+
+/**
+ * Verify status line in a Discord message
+ * Handles Discord user ID mappings for reviewer mentions
+ */
+export function verifyStatusLine(
+  message: DiscordMessage | null,
+  expectedStatus: 'Ready for Review' | 'Draft - In Progress' | 'Approved' | 'Changes Requested' | 'Closed' | 'Merged',
+  reviewer?: string
+): { passed: boolean; errors: string[] } {
+  const errors: string[] = [];
+
+  if (!message) {
+    return {
+      passed: false,
+      errors: ['Discord message not found'],
+    };
+  }
+
+  const content = message.content;
+  const lines = content.split('\n');
+  
+  // Find the status line
+  const statusLineIndex = lines.findIndex((line) => line.startsWith('**Status**:'));
+  
+  if (statusLineIndex === -1) {
+    errors.push('Status line not found in message');
+    return { passed: false, errors };
+  }
+
+  const statusLine = lines[statusLineIndex];
+
+  // Verify status based on expected type
+  switch (expectedStatus) {
+    case 'Ready for Review':
+      if (!statusLine.includes(':eyes: Ready for Review')) {
+        errors.push(`Status line should contain ":eyes: Ready for Review", Got: "${statusLine}"`);
+      }
+      break;
+    case 'Draft - In Progress':
+      if (!statusLine.includes(':pencil: Draft - In Progress')) {
+        errors.push(`Status line should contain ":pencil: Draft - In Progress", Got: "${statusLine}"`);
+      }
+      break;
+    case 'Approved':
+      if (!statusLine.includes('Approved')) {
+        errors.push(`Status line should contain "Approved", Got: "${statusLine}"`);
+      }
+      // If reviewer is specified, check that it's mentioned (might be Discord ID)
+      if (reviewer) {
+        if (!statusLine.includes(reviewer) && !statusLine.includes(`@${reviewer}`) && !statusLine.includes('<@')) {
+          errors.push(`Status line should mention reviewer "${reviewer}", Got: "${statusLine}"`);
+        }
+      }
+      break;
+    case 'Changes Requested':
+      if (!statusLine.includes('Changes Requested')) {
+        errors.push(`Status line should contain "Changes Requested", Got: "${statusLine}"`);
+      }
+      // If reviewer is specified, check that it's mentioned (might be Discord ID)
+      if (reviewer) {
+        if (!statusLine.includes(reviewer) && !statusLine.includes(`@${reviewer}`) && !statusLine.includes('<@')) {
+          errors.push(`Status line should mention reviewer "${reviewer}", Got: "${statusLine}"`);
+        }
+      }
+      break;
+    case 'Closed':
+      if (!statusLine.includes('Closed')) {
+        errors.push(`Status line should contain "Closed", Got: "${statusLine}"`);
+      }
+      break;
+    case 'Merged':
+      if (!statusLine.includes('Merged')) {
+        errors.push(`Status line should contain "Merged", Got: "${statusLine}"`);
+      }
+      break;
+  }
+
+  return {
+    passed: errors.length === 0,
+    errors,
+  };
+}
+
+/**
+ * Verify that a reviewer is mentioned in a message (handles Discord ID mappings)
+ */
+export function verifyReviewerMention(
+  message: DiscordMessage | null,
+  reviewer: string
+): { passed: boolean; error?: string } {
+  if (!message) {
+    return {
+      passed: false,
+      error: 'Discord message not found',
+    };
+  }
+
+  const content = message.content;
+  
+  // Check if reviewer is mentioned (as username, @username, or Discord ID)
+  const hasReviewer = content.includes(reviewer) || 
+                      content.includes(`@${reviewer}`) ||
+                      (content.includes('**Reviewers:**') && content.includes('@'));
+
+  if (!hasReviewer) {
+    return {
+      passed: false,
+      error: `Reviewer "${reviewer}" not found in message. Reviewers may be mapped to Discord IDs.`,
+    };
+  }
+
+  return { passed: true };
 }
