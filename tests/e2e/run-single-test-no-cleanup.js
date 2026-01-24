@@ -37,7 +37,9 @@ console.log('   Run "npm run test:e2e:cleanup" to clean up manually.\n');
 
 try {
   // Use exact match pattern to ensure only this test runs
-  const command = `npx vitest run tests/e2e -t "Test ${testNum}:"`;
+  // Match the specific test name to avoid evaluating skipped tests
+  // Use dot reporter to avoid flooding console with "↓ Test X [skipped]" lines
+  const command = `npx vitest run tests/e2e -t "Test ${testNum}: should" --reporter=dot`;
   execSync(command, { stdio: 'inherit', env: process.env });
 } catch (error) {
   console.error(`\n❌ Test ${testNum} failed`);

@@ -88,6 +88,7 @@ export async function createThread(
 
 /**
  * Send a message in a thread
+ * Uses flags: 4 (SUPPRESS_EMBEDS) so link previews do not appear.
  */
 export async function sendThreadMessage(
   botToken: string,
@@ -98,6 +99,7 @@ export async function sendThreadMessage(
     method: 'POST',
     body: JSON.stringify({
       content,
+      flags: 4, // Suppress embeds (no link preview pop-up)
     }),
   });
 

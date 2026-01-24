@@ -41,14 +41,14 @@ export function buildPRMessage(params: {
   // Reviewers section
   if (reviewerLogins.length > 0) {
     const reviewerMentions = reviewerLogins.map((login) => mapToDiscord(login, userMapping)).join(' ');
-    message += `**Reviewers:** ${reviewerMentions}\n\n`;
+    message += `**Reviewers:** ${reviewerMentions}\n`;
   } else {
     // ANSI warning format in code block
     message += `⚠️ WARNING::No reviewers assigned:\n`;
     message += `PR has to be reviewed by another member before merging.\n`;
   }
 
-  // Status - check if draft
+  // Status - single newline between Reviewers and Status
   if (isDraft) {
     message += `\n**Status**: :pencil: Draft - In Progress\n`;
   } else {
@@ -81,7 +81,15 @@ export function updateReviewersLine(
 
   if (reviewersLineIndex >= 0) {
     beforeReviewers = lines.slice(0, reviewersLineIndex);
-    afterReviewers = lines.slice(reviewersLineIndex + 1);
+    // If we found a warning line, also remove the next line if it's the warning continuation
+    let endIndex = reviewersLineIndex + 1;
+    if (lines[reviewersLineIndex].includes('WARNING::No reviewers assigned')) {
+      // Check if the next line is the warning continuation
+      if (endIndex < lines.length && lines[endIndex].includes('PR has to be reviewed')) {
+        endIndex = endIndex + 1;
+      }
+    }
+    afterReviewers = lines.slice(endIndex);
   } else {
     // If no reviewers line found, assume it should be after the Author line
     const authorLineIndex = lines.findIndex((line) => line.startsWith('**Author:**'));
@@ -99,13 +107,27 @@ export function updateReviewersLine(
 
   if (reviewerLogins.length > 0) {
     const reviewerMentions = reviewerLogins.map((login) => mapToDiscord(login, userMapping)).join(' ');
-    rebuiltLines.push(`**Reviewers:** ${reviewerMentions}\n\n`);
+    rebuiltLines.push(`**Reviewers:** ${reviewerMentions}`);
   } else {
     rebuiltLines.push(`⚠️ WARNING::No reviewers assigned:`);
-    rebuiltLines.push(`PR has to be reviewed by another member before merging.\n`);
+    rebuiltLines.push(`PR has to be reviewed by another member before merging.`);
   }
 
-  rebuiltLines.push(...afterReviewers);
+  // Find Status line and remove any warning text or extra blank lines before it.
+  // Per spec: exactly one blank line between Reviewers/warning and Status.
+  const statusIdx = afterReviewers.findIndex((l) => l.startsWith('**Status**:'));
+  if (statusIdx >= 0) {
+    // Drop any lines between Reviewers/warning and Status (warning text, extra blanks)
+    rebuiltLines.push(''); // Exactly one blank line before Status
+    rebuiltLines.push(...afterReviewers.slice(statusIdx));
+  } else {
+    const filtered = afterReviewers.filter((l) => 
+      !l.includes('PR has to be reviewed') && 
+      !l.includes('WARNING::No reviewers assigned')
+    );
+    rebuiltLines.push(...filtered);
+  }
+  
   return rebuiltLines.join('\n');
 }
 

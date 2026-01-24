@@ -368,6 +368,18 @@ export function verifyPROpenedReadyWithReviewersFormat(
   const content = message.content;
   const lines = content.split('\n');
 
+  // Explicit check: exactly one blank line between Reviewers and Status (no extra newlines)
+  const reviewersToStatusMatch = content.match(/\*\*Reviewers:\*\*[^\n]*\n([\s\S]*?)\n\*\*Status\*\*:/);
+  if (reviewersToStatusMatch) {
+    const between = reviewersToStatusMatch[1];
+    if (between !== '') {
+      const extraNewlines = (between.match(/\n/g) || []).length;
+      errors.push(
+        `Expected exactly one blank line between Reviewers and Status; found ${extraNewlines + 1} extra blank line(s)`
+      );
+    }
+  }
+
   // Expected structure:
   // Line 0: ## [PR #X: Title](url)
   // Line 1: `headBranch` -> `baseBranch`
@@ -653,6 +665,128 @@ export function verifyStatusLine(
         errors.push(`Status line should contain "Merged", Got: "${statusLine}"`);
       }
       break;
+  }
+
+  return {
+    passed: errors.length === 0,
+    errors,
+  };
+}
+
+export type ExpectedStatus = 'Ready for Review' | 'Draft - In Progress' | 'Approved' | 'Changes Requested' | 'Closed' | 'Merged';
+
+/**
+ * Unified parent message format verification.
+ * Verifies exact structure (newlines between sections) per spec, then status.
+ * Use this for end-of-test checks on the Discord parent message.
+ *
+ * Structure (no reviewers):
+ *   ## [PR #N: Title](url)
+ *   `head` -> `base`
+ *   (blank)
+ *   **Author:** @...
+ *   <description>
+ *   (blank)
+ *   ⚠️ WARNING::No reviewers assigned:
+ *   PR has to be reviewed by another member before merging.
+ *   (blank)
+ *   **Status**: <status>
+ *
+ * Structure (with reviewers):
+ *   Same but **Reviewers:** @... instead of warning, then (blank) then **Status**: <status>
+ */
+export function verifyParentMessageFormat(
+  message: DiscordMessage | null,
+  opts: {
+    hasReviewers: boolean;
+    prNumber: number;
+    prTitle: string;
+    prUrl: string;
+    headBranch: string;
+    baseBranch: string;
+    author: string;
+    prDescription?: string;
+    reviewers?: string[];
+  },
+  expectedStatus: ExpectedStatus,
+  reviewerForStatus?: string
+): { passed: boolean; errors: string[] } {
+  const errors: string[] = [];
+  if (!message) {
+    return { passed: false, errors: ['Discord message not found'] };
+  }
+
+  const { hasReviewers, prNumber, prTitle, prUrl, headBranch, baseBranch, author, prDescription } = opts;
+  const content = message.content;
+  const lines = content.split('\n');
+  let idx = 0;
+
+  const next = (): string => lines[idx] ?? '';
+  const expectBlank = () => {
+    if ((next() || '').trim() !== '') {
+      errors.push(`Line ${idx}: Expected blank line, got "${next()}"`);
+    }
+    idx++;
+  };
+  const expectLine = (pattern: RegExp | string, name: string) => {
+    const line = next();
+    const ok = typeof pattern === 'string' ? (line || '').trim() === pattern : pattern.test(line);
+    if (!ok) {
+      errors.push(`Line ${idx} (${name}): Expected match, got "${line}"`);
+    }
+    idx++;
+  };
+
+  const headerRe = new RegExp(`^## \\[PR #${prNumber}: ${prTitle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\]\\(${prUrl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\)$`);
+  const branchRe = new RegExp(`^\`${headBranch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\` -> \`${baseBranch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\`$`);
+
+  expectLine(headerRe, 'Header');
+  expectLine(branchRe, 'Branch');
+  expectBlank();
+  const authorLine = next();
+  if (!authorLine.startsWith('**Author:**') || !authorLine.includes('@')) {
+    errors.push(`Line ${idx} (Author): Expected **Author:** with @, got "${authorLine}"`);
+  }
+  idx++;
+
+  if (prDescription && prDescription.trim() !== '') {
+    const descLines = prDescription.split('\n');
+    for (const d of descLines) {
+      if ((lines[idx] ?? '').trim() !== d.trim()) {
+        errors.push(`Line ${idx} (Description): Expected "${d}", got "${lines[idx]}"`);
+      }
+      idx++;
+    }
+    expectBlank();
+  }
+
+  if (hasReviewers) {
+    const line = next();
+    if (!line.startsWith('**Reviewers:**') || !line.includes('@')) {
+      errors.push(`Line ${idx} (Reviewers): Expected **Reviewers:** with @, got "${line}"`);
+    }
+    idx++;
+  } else {
+    expectLine(/^⚠️ WARNING::No reviewers assigned:$/, 'Warning');
+    const wmsg = 'PR has to be reviewed by another member before merging.';
+    expectLine(wmsg, 'Warning message');
+  }
+
+  expectBlank();
+  const statusLine = next();
+  if (!statusLine.startsWith('**Status**:')) {
+    errors.push(`Line ${idx} (Status): Expected **Status**: ..., got "${statusLine}"`);
+  }
+  idx++;
+
+  const rest = lines.slice(idx);
+  if (rest.some((l) => l.trim() !== '')) {
+    errors.push(`Unexpected content after Status line (line ${idx}+). Newlines between sections must be exact.`);
+  }
+
+  const statusCheck = verifyStatusLine(message, expectedStatus, reviewerForStatus);
+  if (!statusCheck.passed) {
+    errors.push(...(statusCheck.errors ?? []));
   }
 
   return {

@@ -161,6 +161,20 @@ describe('discord', () => {
 
       await expect(sendThreadMessage(botToken, 'invalid', 'Message')).rejects.toThrow();
     });
+
+    it('should set suppress embeds flag (no link preview pop-up)', async () => {
+      (global.fetch as any).mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ id: 'thread-msg-123' }),
+      });
+
+      await sendThreadMessage(botToken, threadId, 'Message with [link](https://example.com)');
+
+      const call = (global.fetch as any).mock.calls[0];
+      const body = JSON.parse(call[1].body);
+      expect(body.flags).toBe(4);
+    });
   });
 
   describe('getMessage', () => {
