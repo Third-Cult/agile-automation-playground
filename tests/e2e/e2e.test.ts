@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { loadConfig } from './config';
 import { GitHubClient } from './helpers/github-client';
 import { DiscordClient, type DiscordMessage } from './helpers/discord-client';
-import { waitForWorkflow, wait } from './helpers/workflow-waiter';
+import { waitForWorkflow, wait, waitForDiscordUpdate } from './helpers/workflow-waiter';
 import { cleanupPR, cleanupDiscordMessageAndThread, generateTestId } from './helpers/cleanup';
 import {
   verifyMessageContent,
@@ -11,6 +11,8 @@ import {
   verifyThreadState,
   verifyParentMessageFormat,
   verifyReviewerMention,
+  type VerificationCase,
+  reportVerificationResults,
 } from './helpers/verification';
 import { TestDataGenerator } from './fixtures/test-data';
 
@@ -21,15 +23,17 @@ import { TestDataGenerator } from './fixtures/test-data';
  * - Reviewers are assigned using real GitHub usernames (from E2E_TEST_REVIEWERS config)
  * - This ensures Discord can correctly map GitHub usernames to Discord users for notifications
  * 
- * Review Actions:
- * - Review actions (approve, request changes, comment) are performed by the GitHub App
- * - This allows testing without requiring actual users to perform actions
- * - The GitHub App submits reviews on behalf of the assigned reviewers
+ * Dual Authentication:
+ * - Primary auth (GITHUB_APP_* or GITHUB_TOKEN): Creates PRs, branches, commits, merges, closes
+ * - Review auth (GITHUB_REVIEW_APP_* or GITHUB_REVIEW_TOKEN): Submits reviews, dismisses reviews
+ * - This separation is required because GitHub doesn't allow PR authors to review their own PRs
+ * - Review actions (approve, request changes, comment) are performed by the review identity
  * 
  * This approach enables:
  * - Testing Discord username mapping functionality
  * - Automated testing without user intervention
  * - Independent test execution in any environment with proper GitHub App setup
+ * - Testing review workflows (approve, changes requested) that require different identities
  */
 
 /**
@@ -101,29 +105,28 @@ async function test1PROpenedDraft(ctx: TestContext): Promise<void> {
 
   // Find Discord message by PR number
   const discordMessage = await ctx.discord.findMessageByPR(pr.number, ctx.config.test.discordPollTimeout);
+  const cases: VerificationCase[] = [];
 
-  // Verify Discord message exists
-  expect(discordMessage).toBeDefined();
-  expect(discordMessage).not.toBeNull();
+  cases.push({
+    name: 'Discord message exists',
+    passed: !!discordMessage,
+    detail: discordMessage ? undefined : 'No message found for PR',
+  });
 
   if (discordMessage) {
     console.log(`✓ Discord message found: ${discordMessage.id}`);
-    
-    // Track message for cleanup
     ctx.trackDiscordMessage(discordMessage);
-    
-    // Verify message content
+
     const contentCheck = verifyMessageContent(discordMessage, [
       `PR #${pr.number}`,
       prTitle,
       'Draft - In Progress',
     ]);
-
-    expect(contentCheck.passed).toBe(true);
-    if (!contentCheck.passed) {
-      console.error('❌ Message content verification failed:', contentCheck.errors);
-      console.log('Actual message content:', discordMessage.content);
-    }
+    cases.push({
+      name: 'Message contains PR #, title, and Draft status',
+      passed: contentCheck.passed,
+      detail: contentCheck.errors.length ? contentCheck.errors.join('; ') : undefined,
+    });
 
     const author = await ctx.github.getPRAuthor(pr.number);
     const formatCheck = verifyParentMessageFormat(
@@ -140,24 +143,18 @@ async function test1PROpenedDraft(ctx: TestContext): Promise<void> {
       },
       'Draft - In Progress'
     );
-    if (!formatCheck.passed) {
-      console.error('❌ Message formatting verification failed:');
-      formatCheck.errors.forEach((e) => console.error(`  - ${e}`));
-      console.log('\nActual message content:\n---\n' + discordMessage.content + '\n---');
-      throw new Error(`Message formatting verification failed:\n${formatCheck.errors.map((e) => `  - ${e}`).join('\n')}\n\nActual message:\n${discordMessage.content}`);
-    }
+    cases.push({
+      name: 'Parent message format (header, branch, author, warning, status)',
+      passed: formatCheck.passed,
+      detail: formatCheck.errors.length ? formatCheck.errors.join('; ') : undefined,
+    });
 
-    // Wait and check metadata for thread ID
     await wait(2000);
-    
-    // Verify metadata was saved to PR and get thread ID
     const metadataCheck = await verifyPRMetadata(ctx.github, pr.number);
     let threadId: string | undefined;
-    
+
     if (metadataCheck.passed && metadataCheck.metadata) {
       threadId = metadataCheck.metadata.thread_id;
-      
-      // If message doesn't have thread info but metadata does, enrich the message
       if (!discordMessage.thread && threadId) {
         try {
           const thread = await ctx.discord.getThread(threadId);
@@ -171,42 +168,43 @@ async function test1PROpenedDraft(ctx: TestContext): Promise<void> {
           console.warn(`⚠️  Failed to fetch thread ${threadId} from Discord:`, error);
         }
       }
-    } else {
-      // Get all comments for debugging
-      const allComments = await ctx.github.getPRComments(pr.number);
-      console.error(`❌ Metadata verification failed: ${metadataCheck.error}`);
-      console.log(`Debug: Found ${allComments.length} comments on PR #${pr.number}`);
     }
 
-    // Verify thread was created (either from message or metadata)
-    if (discordMessage.thread) {
-      expect(discordMessage.thread.id).toBeDefined();
-      // Update tracked message with thread ID for cleanup
-      const trackedIndex = ctx.testDiscordMessages.findIndex(m => m.messageId === discordMessage.id);
+    cases.push({
+      name: 'PR metadata comment exists (thread_id)',
+      passed: metadataCheck.passed,
+      detail: metadataCheck.error,
+    });
+
+    let threadExists = false;
+    if (discordMessage.thread?.id) {
+      threadExists = true;
+      const trackedIndex = ctx.testDiscordMessages.findIndex((m) => m.messageId === discordMessage.id);
       if (trackedIndex >= 0) {
         ctx.testDiscordMessages[trackedIndex].threadId = discordMessage.thread.id;
       }
     } else if (threadId) {
-      // Thread exists according to metadata, but not in message object
-      const trackedIndex = ctx.testDiscordMessages.findIndex(m => m.messageId === discordMessage.id);
+      const trackedIndex = ctx.testDiscordMessages.findIndex((m) => m.messageId === discordMessage.id);
       if (trackedIndex >= 0) {
         ctx.testDiscordMessages[trackedIndex].threadId = threadId;
       }
-      // Verify thread actually exists by fetching it
       try {
         const thread = await ctx.discord.getThread(threadId);
-        expect(thread).toBeDefined();
-        expect(thread.id).toBe(threadId);
-      } catch (error) {
-        console.error(`❌ Thread ${threadId} from metadata does not exist in Discord:`, error);
-        throw new Error(`Thread ${threadId} from metadata does not exist in Discord`);
+        threadExists = !!thread?.id;
+      } catch {
+        threadExists = false;
       }
-    } else {
-      throw new Error('Thread was not created - neither message.thread nor metadata.thread_id found');
     }
-    
-    console.log('✅ Test 1 completed successfully!\n');
+
+    cases.push({
+      name: 'Thread created (message or metadata)',
+      passed: threadExists,
+      detail: threadExists ? undefined : 'Neither message.thread nor metadata thread_id found or fetchable',
+    });
   }
+
+  reportVerificationResults('Test 1: PR Opened (Draft)', cases);
+  console.log('✅ Test 1 completed successfully!\n');
 }
 
 /**
@@ -256,18 +254,18 @@ async function test2PROpenedReady(ctx: TestContext): Promise<void> {
 
   // Find Discord message by PR number
   const discordMessage = await ctx.discord.findMessageByPR(pr.number, ctx.config.test.discordPollTimeout);
+  const cases: VerificationCase[] = [];
 
-  // Verify Discord message exists
-  expect(discordMessage).toBeDefined();
-  expect(discordMessage).not.toBeNull();
+  cases.push({
+    name: 'Discord message exists',
+    passed: !!discordMessage,
+    detail: discordMessage ? undefined : 'No message found for PR',
+  });
 
   if (discordMessage) {
     console.log(`✓ Discord message found: ${discordMessage.id}`);
-    
-    // Track message for cleanup
     ctx.trackDiscordMessage(discordMessage);
-    
-    // Verify message content includes warning
+
     const contentCheck = verifyMessageContent(discordMessage, [
       `PR #${pr.number}`,
       prTitle,
@@ -275,12 +273,11 @@ async function test2PROpenedReady(ctx: TestContext): Promise<void> {
       'WARNING',
       'No reviewers assigned',
     ]);
-
-    expect(contentCheck.passed).toBe(true);
-    if (!contentCheck.passed) {
-      console.error('❌ Message content verification failed:', contentCheck.errors);
-      console.log('Actual message content:', discordMessage.content);
-    }
+    cases.push({
+      name: 'Message contains PR #, title, Ready for Review, WARNING, No reviewers assigned',
+      passed: contentCheck.passed,
+      detail: contentCheck.errors.length ? contentCheck.errors.join('; ') : undefined,
+    });
 
     const author = await ctx.github.getPRAuthor(pr.number);
     const formatCheck = verifyParentMessageFormat(
@@ -297,22 +294,18 @@ async function test2PROpenedReady(ctx: TestContext): Promise<void> {
       },
       'Ready for Review'
     );
-    if (!formatCheck.passed) {
-      console.error('❌ Message formatting verification failed:');
-      formatCheck.errors.forEach((e) => console.error(`  - ${e}`));
-      console.log('\nActual message content:\n---\n' + discordMessage.content + '\n---');
-      throw new Error(`Message formatting verification failed:\n${formatCheck.errors.map((e) => `  - ${e}`).join('\n')}\n\nActual message:\n${discordMessage.content}`);
-    }
+    cases.push({
+      name: 'Parent message format (header, branch, author, warning, status)',
+      passed: formatCheck.passed,
+      detail: formatCheck.errors.length ? formatCheck.errors.join('; ') : undefined,
+    });
 
-    // Wait and check metadata for thread ID
     await wait(2000);
-    
     const metadataCheck = await verifyPRMetadata(ctx.github, pr.number);
     let threadId: string | undefined;
-    
+
     if (metadataCheck.passed && metadataCheck.metadata) {
       threadId = metadataCheck.metadata.thread_id;
-      
       if (!discordMessage.thread && threadId) {
         try {
           const thread = await ctx.discord.getThread(threadId);
@@ -326,46 +319,43 @@ async function test2PROpenedReady(ctx: TestContext): Promise<void> {
           console.warn(`⚠️  Failed to fetch thread ${threadId} from Discord:`, error);
         }
       }
-    } else {
-      const allComments = await ctx.github.getPRComments(pr.number);
-      console.error(`❌ Metadata verification failed: ${metadataCheck.error}`);
-      console.log(`Debug: Found ${allComments.length} comments on PR #${pr.number}`);
     }
 
-    // Verify thread was created (either from message or metadata)
-    if (discordMessage.thread) {
-      expect(discordMessage.thread.id).toBeDefined();
-      // Update tracked message with thread ID for cleanup
-      const trackedIndex = ctx.testDiscordMessages.findIndex(m => m.messageId === discordMessage.id);
+    cases.push({
+      name: 'PR metadata comment exists (thread_id)',
+      passed: metadataCheck.passed,
+      detail: metadataCheck.error,
+    });
+
+    let threadExists = false;
+    if (discordMessage.thread?.id) {
+      threadExists = true;
+      const trackedIndex = ctx.testDiscordMessages.findIndex((m) => m.messageId === discordMessage.id);
       if (trackedIndex >= 0) {
         ctx.testDiscordMessages[trackedIndex].threadId = discordMessage.thread.id;
       }
     } else if (threadId) {
-      // Thread exists according to metadata, but not in message object
-      const trackedIndex = ctx.testDiscordMessages.findIndex(m => m.messageId === discordMessage.id);
+      const trackedIndex = ctx.testDiscordMessages.findIndex((m) => m.messageId === discordMessage.id);
       if (trackedIndex >= 0) {
         ctx.testDiscordMessages[trackedIndex].threadId = threadId;
       }
-      // Verify thread actually exists by fetching it
       try {
         const thread = await ctx.discord.getThread(threadId);
-        expect(thread).toBeDefined();
-        expect(thread.id).toBe(threadId);
-      } catch (error) {
-        console.error(`❌ Thread ${threadId} from metadata does not exist in Discord:`, error);
-        throw new Error(`Thread ${threadId} from metadata does not exist in Discord`);
+        threadExists = !!thread?.id;
+      } catch {
+        threadExists = false;
       }
-    } else {
-      throw new Error('Thread was not created - neither message.thread nor metadata.thread_id found');
     }
-    
-    // Note: Metadata check is lenient - we log but don't fail if it's not found immediately
-    if (!metadataCheck.passed) {
-      console.warn('⚠️  Metadata not found, but Discord message and thread were created successfully');
-    }
-    
-    console.log('✅ Test 2 completed successfully!\n');
+
+    cases.push({
+      name: 'Thread created (message or metadata)',
+      passed: threadExists,
+      detail: threadExists ? undefined : 'Neither message.thread nor metadata thread_id found or fetchable',
+    });
   }
+
+  reportVerificationResults('Test 2: PR Opened (Ready)', cases);
+  console.log('✅ Test 2 completed successfully!\n');
 }
 
 /**
@@ -420,49 +410,35 @@ async function test3PROpenedMultipleReviewers(ctx: TestContext): Promise<void> {
 
   // Find Discord message by PR number
   const discordMessage = await ctx.discord.findMessageByPR(pr.number, ctx.config.test.discordPollTimeout);
+  const cases: VerificationCase[] = [];
 
-  // Verify Discord message exists
-  expect(discordMessage).toBeDefined();
-  expect(discordMessage).not.toBeNull();
+  cases.push({
+    name: 'Discord message exists',
+    passed: !!discordMessage,
+    detail: discordMessage ? undefined : 'No message found for PR',
+  });
 
   if (discordMessage) {
     console.log(`✓ Discord message found: ${discordMessage.id}`);
-    
-    // Track message for cleanup
     ctx.trackDiscordMessage(discordMessage);
-    
-    // Verify message content includes all reviewers
+
     const contentCheck = verifyMessageContent(discordMessage, [
       `PR #${pr.number}`,
       prTitle,
       'Ready for Review',
     ]);
+    cases.push({
+      name: 'Message contains PR #, title, Ready for Review',
+      passed: contentCheck.passed,
+      detail: contentCheck.errors.length ? contentCheck.errors.join('; ') : undefined,
+    });
 
-    expect(contentCheck.passed).toBe(true);
-    if (!contentCheck.passed) {
-      console.error('❌ Message content verification failed:', contentCheck.errors);
-      console.log('Actual message content:', discordMessage.content);
-    }
-
-    // Verify all reviewers are listed (check for reviewer mentions)
-    // Note: Reviewers might be mapped to Discord IDs, so we check for the reviewers line format
     const hasReviewersLine = discordMessage.content.includes('**Reviewers:**');
-    expect(hasReviewersLine).toBe(true);
-    
-    // Check if reviewers are mentioned (they might be Discord IDs or usernames)
-    let reviewersFound = 0;
-    for (const reviewer of reviewers) {
-      // Check for username, @username, or Discord mention format
-      if (discordMessage.content.includes(reviewer) || 
-          discordMessage.content.includes(`@${reviewer}`) ||
-          discordMessage.content.includes(`<@`) && discordMessage.content.includes('**Reviewers:**')) {
-        reviewersFound++;
-      }
-    }
-
-    // Should find at least the reviewers line, and ideally all reviewers
-    // But allow for Discord ID mapping which makes exact username matching harder
-    expect(hasReviewersLine).toBe(true);
+    cases.push({
+      name: 'Message has Reviewers line',
+      passed: hasReviewersLine,
+      detail: hasReviewersLine ? undefined : '**Reviewers:** not found',
+    });
 
     const author = await ctx.github.getPRAuthor(pr.number);
     const formatCheck = verifyParentMessageFormat(
@@ -480,22 +456,19 @@ async function test3PROpenedMultipleReviewers(ctx: TestContext): Promise<void> {
       },
       'Ready for Review'
     );
-    if (!formatCheck.passed) {
-      console.error('❌ Message formatting verification failed:');
-      formatCheck.errors.forEach((e) => console.error(`  - ${e}`));
-      console.log('\nActual message content:\n---\n' + discordMessage.content + '\n---');
-      throw new Error(`Message formatting verification failed:\n${formatCheck.errors.map((e) => `  - ${e}`).join('\n')}\n\nActual message:\n${discordMessage.content}`);
-    }
+    cases.push({
+      name: 'Parent message format (header, branch, author, reviewers, status)',
+      passed: formatCheck.passed,
+      detail: formatCheck.errors.length ? formatCheck.errors.join('; ') : undefined,
+    });
 
-    // Wait and check metadata for thread ID
     await wait(2000);
-    
     const metadataCheck = await verifyPRMetadata(ctx.github, pr.number);
     let threadId: string | undefined;
-    
+    let finalThreadId: string | undefined;
+
     if (metadataCheck.passed && metadataCheck.metadata) {
       threadId = metadataCheck.metadata.thread_id;
-      
       if (!discordMessage.thread && threadId) {
         try {
           const thread = await ctx.discord.getThread(threadId);
@@ -509,60 +482,53 @@ async function test3PROpenedMultipleReviewers(ctx: TestContext): Promise<void> {
           console.warn(`⚠️  Failed to fetch thread ${threadId} from Discord:`, error);
         }
       }
-    } else {
-      const allComments = await ctx.github.getPRComments(pr.number);
-      console.error(`❌ Metadata verification failed: ${metadataCheck.error}`);
-      console.log(`Debug: Found ${allComments.length} comments on PR #${pr.number}`);
     }
 
-    // Verify thread was created
-    let finalThreadId: string | undefined;
-    if (discordMessage.thread) {
-      expect(discordMessage.thread.id).toBeDefined();
+    cases.push({
+      name: 'PR metadata comment exists (thread_id)',
+      passed: metadataCheck.passed,
+      detail: metadataCheck.error,
+    });
+
+    let threadExists = false;
+    if (discordMessage.thread?.id) {
+      threadExists = true;
       finalThreadId = discordMessage.thread.id;
-      const trackedIndex = ctx.testDiscordMessages.findIndex(m => m.messageId === discordMessage.id);
+      const trackedIndex = ctx.testDiscordMessages.findIndex((m) => m.messageId === discordMessage.id);
       if (trackedIndex >= 0) {
         ctx.testDiscordMessages[trackedIndex].threadId = finalThreadId;
       }
     } else if (threadId) {
       finalThreadId = threadId;
-      const trackedIndex = ctx.testDiscordMessages.findIndex(m => m.messageId === discordMessage.id);
+      const trackedIndex = ctx.testDiscordMessages.findIndex((m) => m.messageId === discordMessage.id);
       if (trackedIndex >= 0) {
-        ctx.testDiscordMessages[trackedIndex].threadId = finalThreadId;
+        ctx.testDiscordMessages[trackedIndex].threadId = threadId;
       }
       try {
-        const thread = await ctx.discord.getThread(finalThreadId);
-        expect(thread).toBeDefined();
-        expect(thread.id).toBe(finalThreadId);
-      } catch (error) {
-        console.error(`❌ Thread ${finalThreadId} from metadata does not exist in Discord:`, error);
-        throw new Error(`Thread ${finalThreadId} from metadata does not exist in Discord`);
+        const thread = await ctx.discord.getThread(threadId);
+        threadExists = !!thread?.id;
+      } catch {
+        threadExists = false;
       }
-    } else {
-      throw new Error('Thread was not created - neither message.thread nor metadata.thread_id found');
-    }
-    
-    if (!metadataCheck.passed) {
-      console.warn('⚠️  Metadata not found, but Discord message and thread were created successfully');
     }
 
-    // Verify that each reviewer received a UNIQUE thread message
-    // When multiple reviewers are added at PR creation, each should get their own message
+    cases.push({
+      name: 'Thread created (message or metadata)',
+      passed: threadExists,
+      detail: threadExists ? undefined : 'Neither message.thread nor metadata thread_id found or fetchable',
+    });
+
+    let reviewerMessages: Array<{ reviewer: string; found: boolean; messageId?: string }> = [];
+    let threadMessages: DiscordMessage[] = [];
+
     if (finalThreadId && reviewers.length > 0) {
-      // Poll for reviewer messages - they may arrive asynchronously
       let allReviewerMessagesFound = false;
       let attempts = 0;
-      const maxAttempts = 20; // 20 attempts * 2 seconds = 40 seconds max
-      const reviewerMessages: Array<{ reviewer: string; found: boolean; messageId?: string; message?: string }> = [];
-      let threadMessages: DiscordMessage[] = [];
-      
+      const maxAttempts = 20;
       while (attempts < maxAttempts && !allReviewerMessagesFound) {
-        await wait(2000); // Wait 2 seconds between attempts
+        await wait(2000);
         attempts++;
-        
         threadMessages = await ctx.discord.getThreadMessages(finalThreadId, 50);
-        
-        // Filter to only reviewer notification messages (exclude the initial thread setup message)
         const reviewerNotificationMessages = threadMessages.filter((msg) => {
           const content = msg.content.toLowerCase();
           return (
@@ -571,96 +537,62 @@ async function test3PROpenedMultipleReviewers(ctx: TestContext): Promise<void> {
             (content.includes('pr #') || content.includes('pull request'))
           );
         });
-        
-        // Track which reviewers have been found
-        reviewerMessages.length = 0; // Reset
-        const usedMessageIds = new Set<string>(); // Track messages already matched to avoid duplicates
-        
+        reviewerMessages = [];
+        const usedMessageIds = new Set<string>();
         for (const reviewer of reviewers) {
-          // Look for a UNIQUE message that mentions this specific reviewer
-          // The message format is: ":bellhop: @reviewer - your review has been requested for [PR #X](url)"
           const reviewerMessage = reviewerNotificationMessages.find((msg) => {
-            // Skip if this message was already matched to another reviewer
-            if (usedMessageIds.has(msg.id)) {
-              return false;
-            }
-            
+            if (usedMessageIds.has(msg.id)) return false;
             const content = msg.content.toLowerCase();
             const reviewerLower = reviewer.toLowerCase();
-            
-            // Must contain the reviewer's username OR a Discord mention
-            // AND must be a reviewer notification message
-            const mentionsReviewer = 
-              content.includes(reviewerLower) || 
-              (content.includes('<@') && content.includes('review'));
-            
-            return mentionsReviewer && 
-                   content.includes(':bellhop:') &&
-                   (content.includes('review') || content.includes('requested'));
+            const mentionsReviewer =
+              content.includes(reviewerLower) || (content.includes('<@') && content.includes('review'));
+            return (
+              mentionsReviewer &&
+              content.includes(':bellhop:') &&
+              (content.includes('review') || content.includes('requested'))
+            );
           });
-          
           if (reviewerMessage) {
-            usedMessageIds.add(reviewerMessage.id); // Mark as used
-            reviewerMessages.push({
-              reviewer,
-              found: true,
-              messageId: reviewerMessage.id,
-              message: reviewerMessage.content,
-            });
+            usedMessageIds.add(reviewerMessage.id);
+            reviewerMessages.push({ reviewer, found: true, messageId: reviewerMessage.id });
           } else {
-            reviewerMessages.push({
-              reviewer,
-              found: false,
-            });
+            reviewerMessages.push({ reviewer, found: false });
           }
         }
-        
-        // Check if all reviewers have messages
-        allReviewerMessagesFound = reviewerMessages.every(rm => rm.found);
-        
+        allReviewerMessagesFound = reviewerMessages.every((rm) => rm.found);
         if (!allReviewerMessagesFound) {
-          const foundCount = reviewerMessages.filter(rm => rm.found).length;
+          const foundCount = reviewerMessages.filter((rm) => rm.found).length;
           console.log(`  Attempt ${attempts}/${maxAttempts}: Found ${foundCount}/${reviewers.length} reviewer messages, continuing to poll...`);
         }
       }
-      
-      // Verify all reviewers got UNIQUE messages
-      const missingReviewers = reviewerMessages.filter(rm => !rm.found).map(rm => rm.reviewer);
-      const foundCount = reviewerMessages.filter(rm => rm.found).length;
-      
-      if (missingReviewers.length > 0) {
-        console.error(`\n❌ Missing thread messages for ${missingReviewers.length} reviewer(s): ${missingReviewers.join(', ')}`);
-        console.error(`   Expected ${reviewers.length} unique reviewer notification message(s), but only found ${foundCount}.`);
-        console.log('\nAll thread messages:');
-        threadMessages.forEach((msg, idx) => {
-          const isReviewerMsg = msg.content.includes(':bellhop:') && msg.content.includes('review');
-          console.log(`  ${idx + 1}. ${isReviewerMsg ? '📬' : '  '} ${msg.content.substring(0, 150)}${msg.content.length > 150 ? '...' : ''}`);
-        });
-        console.log('\nReviewer message matching:');
-        reviewerMessages.forEach((rm) => {
-          console.log(`  ${rm.found ? '✓' : '✗'} ${rm.reviewer}: ${rm.found ? `Message ID ${rm.messageId}` : 'NOT FOUND'}`);
-        });
-        throw new Error(
-          `Test 3 failed: Missing thread messages for reviewer(s): ${missingReviewers.join(', ')}. ` +
-          `Expected ${reviewers.length} unique reviewer notification message(s) (one per reviewer), ` +
-          `but only found ${foundCount}. ` +
-          `Each reviewer must receive their own individual thread message when added to the PR.`
-        );
-      }
-      
-      // Verify we have exactly the right number of reviewer messages (no duplicates)
+
+      const missingReviewers = reviewerMessages.filter((rm) => !rm.found).map((rm) => rm.reviewer);
+      const foundCount = reviewerMessages.filter((rm) => rm.found).length;
+      cases.push({
+        name: `Each reviewer has unique thread message (${foundCount}/${reviewers.length})`,
+        passed: missingReviewers.length === 0,
+        detail:
+          missingReviewers.length > 0
+            ? `Missing: ${missingReviewers.join(', ')}`
+            : undefined,
+      });
+
       const reviewerNotificationCount = threadMessages.filter((msg) => {
         const content = msg.content.toLowerCase();
-        return content.includes(':bellhop:') && 
-               (content.includes('review') || content.includes('requested')) &&
-               (content.includes('pr #') || content.includes('pull request'));
+        return (
+          content.includes(':bellhop:') &&
+          (content.includes('review') || content.includes('requested')) &&
+          (content.includes('pr #') || content.includes('pull request'))
+        );
       }).length;
-      
-      if (reviewerNotificationCount !== reviewers.length) {
-        console.warn(`⚠️  Found ${reviewerNotificationCount} reviewer notification messages, but expected ${reviewers.length}. This might indicate duplicate or missing messages.`);
-      }
-      
-      console.log(`✓ All ${reviewers.length} reviewer(s) received their individual thread messages`);
+      cases.push({
+        name: `Exact reviewer notification count (${reviewerNotificationCount} = ${reviewers.length})`,
+        passed: reviewerNotificationCount === reviewers.length,
+        detail:
+          reviewerNotificationCount !== reviewers.length
+            ? `Found ${reviewerNotificationCount}, expected ${reviewers.length}`
+            : undefined,
+      });
     }
 
     await wait(2000);
@@ -681,16 +613,16 @@ async function test3PROpenedMultipleReviewers(ctx: TestContext): Promise<void> {
         },
         'Ready for Review'
       );
-      if (!finalFormatCheck.passed) {
-        console.error('❌ Final message formatting verification failed (after workflow completion):');
-        finalFormatCheck.errors.forEach((e) => console.error(`  - ${e}`));
-        console.log('\nFinal message content:\n---\n' + finalMessage.content + '\n---');
-        throw new Error(`Final message formatting verification failed:\n${finalFormatCheck.errors.map((e) => `  - ${e}`).join('\n')}\n\nFinal message:\n${finalMessage.content}`);
-      }
-      console.log('✓ Final message format verified after workflow completion');
+      cases.push({
+        name: 'Final message format (after workflow completion)',
+        passed: finalFormatCheck.passed,
+        detail: finalFormatCheck.errors.length ? finalFormatCheck.errors.join('; ') : undefined,
+      });
     }
-    console.log('✅ Test 3 completed successfully!\n');
   }
+
+  reportVerificationResults('Test 3: PR Opened (Multiple Reviewers)', cases);
+  console.log('✅ Test 3 completed successfully!\n');
 }
 
 /**
@@ -733,10 +665,25 @@ async function test4DraftToReady(ctx: TestContext): Promise<void> {
 
   // Get initial Discord message
   const initialMessage = await ctx.discord.findMessageByPR(pr.number, ctx.config.test.discordPollTimeout);
-  expect(initialMessage).toBeDefined();
-  expect(initialMessage?.content).toContain('Draft - In Progress');
-  console.log(`✓ Initial message found: ${initialMessage?.id} (Draft status confirmed)`);
-  ctx.trackDiscordMessage(initialMessage);
+  const cases: VerificationCase[] = [];
+
+  cases.push({
+    name: 'Initial Discord message exists',
+    passed: !!initialMessage,
+    detail: initialMessage ? undefined : 'No message found for PR',
+  });
+
+  if (initialMessage) {
+    ctx.trackDiscordMessage(initialMessage);
+    cases.push({
+      name: 'Initial message shows Draft - In Progress',
+      passed: !!initialMessage.content?.includes('Draft - In Progress'),
+      detail: initialMessage.content?.includes('Draft - In Progress')
+        ? undefined
+        : 'Message does not contain "Draft - In Progress"',
+    });
+    console.log(`✓ Initial message found: ${initialMessage.id} (Draft status confirmed)`);
+  }
 
   // Mark PR as ready for review
   await ctx.github.markReadyForReview(pr.number);
@@ -745,38 +692,58 @@ async function test4DraftToReady(ctx: TestContext): Promise<void> {
   await waitForWorkflow(ctx.github, pr.number, ctx.config.test.workflowTimeout);
   await wait(3000);
 
-  const updatedMessage = await ctx.discord.getMessage(initialMessage!.id);
-  expect(updatedMessage.content).not.toContain('Draft - In Progress');
-  console.log(`✓ Status updated from "Draft - In Progress" to "Ready for Review"`);
+  const updatedMessage = initialMessage
+    ? await ctx.discord.getMessage(initialMessage.id)
+    : null;
 
-  const author = await ctx.github.getPRAuthor(pr.number);
-  const formatCheck = verifyParentMessageFormat(
-    updatedMessage,
-    {
-      hasReviewers: false,
-      prNumber: pr.number,
-      prTitle,
-      prUrl: pr.url,
-      headBranch: branchName,
-      baseBranch: defaultBranch,
-      author,
-      prDescription,
-    },
-    'Ready for Review'
-  );
-  if (!formatCheck.passed) {
-    console.error('❌ Final message formatting verification failed:');
-    formatCheck.errors.forEach((e) => console.error(`  - ${e}`));
-    console.log('\nFinal message content:\n---\n' + updatedMessage.content + '\n---');
-    throw new Error(`Final message formatting verification failed:\n${formatCheck.errors.map((e) => `  - ${e}`).join('\n')}\n\nFinal message:\n${updatedMessage.content}`);
-  }
-  console.log('✓ Final message format verified');
+  if (updatedMessage) {
+    cases.push({
+      name: 'Status updated: no longer Draft - In Progress',
+      passed: !updatedMessage.content.includes('Draft - In Progress'),
+      detail: updatedMessage.content.includes('Draft - In Progress')
+        ? 'Message still contains "Draft - In Progress"'
+        : undefined,
+    });
 
-  if (updatedMessage.thread) {
-    const threadMessages = await ctx.discord.getThreadMessages(updatedMessage.thread.id, 10);
-    const readyMessage = threadMessages.find((msg) => msg.content.includes('ready for review'));
-    expect(readyMessage).toBeDefined();
+    const author = await ctx.github.getPRAuthor(pr.number);
+    const formatCheck = verifyParentMessageFormat(
+      updatedMessage,
+      {
+        hasReviewers: false,
+        prNumber: pr.number,
+        prTitle,
+        prUrl: pr.url,
+        headBranch: branchName,
+        baseBranch: defaultBranch,
+        author,
+        prDescription,
+      },
+      'Ready for Review'
+    );
+    cases.push({
+      name: 'Parent message format (Ready for Review)',
+      passed: formatCheck.passed,
+      detail: formatCheck.errors.length ? formatCheck.errors.join('; ') : undefined,
+    });
+
+    if (updatedMessage.thread) {
+      const threadMessages = await ctx.discord.getThreadMessages(updatedMessage.thread.id, 10);
+      const readyMessage = threadMessages.find((msg) => msg.content.includes('ready for review'));
+      cases.push({
+        name: 'Thread contains "ready for review" message',
+        passed: !!readyMessage,
+        detail: readyMessage ? undefined : 'No thread message with "ready for review"',
+      });
+    } else {
+      cases.push({
+        name: 'Thread contains "ready for review" message',
+        passed: false,
+        detail: 'No thread on message',
+      });
+    }
   }
+
+  reportVerificationResults('Test 4: Draft → Ready', cases);
   console.log('✅ Test 4 completed successfully!\n');
 }
 
@@ -820,79 +787,86 @@ async function test5ReviewerAdded(ctx: TestContext): Promise<void> {
 
   // Get initial Discord message
   const initialMessage = await ctx.discord.findMessageByPR(pr.number, ctx.config.test.discordPollTimeout);
-  expect(initialMessage).toBeDefined();
+  const cases: VerificationCase[] = [];
+
+  cases.push({
+    name: 'Initial Discord message exists',
+    passed: !!initialMessage,
+    detail: initialMessage ? undefined : 'No message found for PR',
+  });
+
+  if (!initialMessage) {
+    reportVerificationResults('Test 5: Reviewer Added', cases);
+    console.log('✅ Test 5 completed (skipped further checks)\n');
+    return;
+  }
+
   ctx.trackDiscordMessage(initialMessage);
 
   // Add reviewer
-  // Note: Reviewer is assigned using their real GitHub username so Discord can map them correctly
   const reviewer = ctx.config.test.reviewers![0];
   await ctx.github.requestReviewers(pr.number, [reviewer]);
 
-  // Wait for workflow (review_requested event)
   await waitForWorkflow(ctx.github, pr.number, ctx.config.test.workflowTimeout);
-  
-  // Poll for parent message to be updated (can take time for Discord to process)
-  let updatedMessage = await ctx.discord.getMessage(initialMessage!.id);
+
+  let updatedMessage = await ctx.discord.getMessage(initialMessage.id);
   let attempts = 0;
-  const maxAttempts = 15; // 15 attempts * 2 seconds = 30 seconds max
+  const maxAttempts = 15;
   while (attempts < maxAttempts && !updatedMessage.content.includes('**Reviewers:**')) {
     await wait(2000);
-    updatedMessage = await ctx.discord.getMessage(initialMessage!.id);
+    updatedMessage = await ctx.discord.getMessage(initialMessage.id);
     attempts++;
   }
   if (attempts >= maxAttempts) {
     console.warn(`⚠️  Parent message not updated after ${maxAttempts * 2} seconds`);
   }
 
-  // Verify parent message was updated with reviewer
+  cases.push({
+    name: 'Parent message updated with **Reviewers:**',
+    passed: updatedMessage.content.includes('**Reviewers:**'),
+    detail: updatedMessage.content.includes('**Reviewers:**')
+      ? undefined
+      : `Poll timed out after ${maxAttempts * 2}s`,
+  });
+
   const reviewerCheck = verifyReviewerMention(updatedMessage, reviewer);
-  if (!reviewerCheck.passed) {
-    console.warn(`⚠️  Reviewer mention check: ${reviewerCheck.error}`);
-    // Still check if reviewers line exists
-    expect(updatedMessage.content).toContain('**Reviewers:**');
-  }
-  
-  // Wait for thread message to appear
+  cases.push({
+    name: 'Reviewer mention in parent message',
+    passed: reviewerCheck.passed,
+    detail: reviewerCheck.error,
+  });
+
   await wait(5000);
 
-  // Verify thread message was posted
-  if (initialMessage?.thread) {
+  if (initialMessage.thread) {
     const threadMessages = await ctx.discord.getThreadMessages(initialMessage.thread.id, 10);
-    
-    // Check for reviewer notification message - format: ":bellhop: @mention - your review as been requested for [PR #X](url)"
-    // Note: There's a typo in the actual message: "as been" instead of "has been"
     const reviewerMessage = threadMessages.find((msg) => {
       const content = msg.content || '';
       return (
         content.includes(':bellhop:') ||
-        (content.includes('review') && (
-          content.includes('requested') ||
-          content.includes('review as been') ||
-          content.includes('review has been') ||
-          (content.includes(reviewer) || content.includes('@'))
-        ))
+        (content.includes('review') &&
+          (content.includes('requested') ||
+            content.includes('review as been') ||
+            content.includes('review has been') ||
+            (content.includes(reviewer) || content.includes('@'))))
       );
     });
-    
-    if (!reviewerMessage) {
-      console.error('❌ Thread message about reviewer request not found');
-      console.error('Searched for messages containing:');
-      console.error(`  - ":bellhop:" emoji`);
-      console.error(`  - "review" with "requested"`);
-      console.error(`  - "review as been requested" (typo variant)`);
-      console.error(`  - "review" with reviewer "${reviewer}" or @ mention`);
-      throw new Error('Thread message about reviewer request not found');
-    }
-    expect(reviewerMessage).toBeDefined();
+    cases.push({
+      name: 'Thread message about reviewer request',
+      passed: !!reviewerMessage,
+      detail: reviewerMessage ? undefined : 'No :bellhop: / review requested message in thread',
+    });
+  } else {
+    cases.push({
+      name: 'Thread message about reviewer request',
+      passed: false,
+      detail: 'No thread on message',
+    });
   }
 
-  // Re-verify message format at the end of workflow (after reviewer is added)
-  // This ensures the message format is correct with the reviewer and no warning text
-  await wait(2000); // Give a bit more time for any final updates
-  const finalMessage = await ctx.discord.getMessage(initialMessage!.id);
-  
+  await wait(2000);
+  const finalMessage = await ctx.discord.getMessage(initialMessage.id);
   if (finalMessage) {
-    // Verify the message doesn't contain the warning text (should be removed when reviewer is added)
     const author = await ctx.github.getPRAuthor(pr.number);
     const formatCheck = verifyParentMessageFormat(
       finalMessage,
@@ -909,14 +883,14 @@ async function test5ReviewerAdded(ctx: TestContext): Promise<void> {
       },
       'Ready for Review'
     );
-    if (!formatCheck.passed) {
-      console.error('❌ Final message formatting verification failed (after reviewer added):');
-      formatCheck.errors.forEach((e) => console.error(`  - ${e}`));
-      console.log('\nFinal message content:\n---\n' + finalMessage.content + '\n---');
-      throw new Error(`Final message formatting verification failed:\n${formatCheck.errors.map((e) => `  - ${e}`).join('\n')}\n\nFinal message:\n${finalMessage.content}`);
-    }
-    console.log('✓ Final message format verified after reviewer was added');
+    cases.push({
+      name: 'Final message format (reviewer, no warning)',
+      passed: formatCheck.passed,
+      detail: formatCheck.errors.length ? formatCheck.errors.join('; ') : undefined,
+    });
   }
+
+  reportVerificationResults('Test 5: Reviewer Added', cases);
   console.log('✅ Test 5 completed successfully!\n');
 }
 
@@ -961,37 +935,39 @@ async function test6ReviewerRemoved(ctx: TestContext): Promise<void> {
   await waitForWorkflow(ctx.github, pr.number, ctx.config.test.workflowTimeout);
   await wait(3000);
 
-  // Get initial Discord message
   const initialMessage = await ctx.discord.findMessageByPR(pr.number, ctx.config.test.discordPollTimeout);
-  expect(initialMessage).toBeDefined();
-  const initialReviewerCheck = verifyReviewerMention(initialMessage!, reviewer);
-  if (!initialReviewerCheck.passed) {
-    console.warn(`⚠️  Initial reviewer mention check: ${initialReviewerCheck.error}`);
-    // Still verify reviewers line exists
-    expect(initialMessage?.content).toContain('**Reviewers:**');
+  const cases: VerificationCase[] = [];
+
+  cases.push({
+    name: 'Initial Discord message exists',
+    passed: !!initialMessage,
+    detail: initialMessage ? undefined : 'No message found for PR',
+  });
+
+  if (!initialMessage) {
+    reportVerificationResults('Test 6: Reviewer Removed', cases);
+    console.log('✅ Test 6 completed (skipped further checks)\n');
+    return;
   }
+
+  const initialReviewerCheck = verifyReviewerMention(initialMessage, reviewer);
+  cases.push({
+    name: 'Initial message has **Reviewers:** and reviewer mention',
+    passed: initialReviewerCheck.passed || initialMessage.content.includes('**Reviewers:**'),
+    detail: initialReviewerCheck.passed ? undefined : initialReviewerCheck.error,
+  });
   ctx.trackDiscordMessage(initialMessage);
 
-  // Remove reviewer
   await ctx.github.removeReviewer(pr.number, reviewer);
-
-  // Wait for workflow (review_request_removed event)
   await waitForWorkflow(ctx.github, pr.number, ctx.config.test.workflowTimeout);
-  
-  // Wait longer for Discord to process messages
   await wait(10000);
 
-  // Verify thread message was posted (poll for it)
-  if (initialMessage?.thread) {
-    // Poll for thread message (can take time for Discord to process)
-    let removalMessage: DiscordMessage | undefined = undefined;
+  let removalMessage: DiscordMessage | undefined;
+  if (initialMessage.thread) {
     let attempts = 0;
-    const maxAttempts = 15; // 15 attempts * 2 seconds = 30 seconds max
-    
+    const maxAttempts = 15;
     while (attempts < maxAttempts && !removalMessage) {
       const threadMessages = await ctx.discord.getThreadMessages(initialMessage.thread.id, 10);
-      
-      // Reviewer might be mapped to Discord ID, so check for "removed as a reviewer" and any mention
       removalMessage = threadMessages.find((msg) => {
         const content = msg.content || '';
         return (
@@ -999,27 +975,25 @@ async function test6ReviewerRemoved(ctx: TestContext): Promise<void> {
           (content.includes('removed') && (content.includes(reviewer) || content.includes('@')))
         );
       });
-      
       if (!removalMessage) {
         await wait(2000);
         attempts++;
       }
     }
-    
-    if (!removalMessage) {
-      console.error('❌ Thread message about reviewer removal not found after polling');
-      const finalThreadMessages = await ctx.discord.getThreadMessages(initialMessage.thread.id, 10);
-      console.error(`Final thread messages (${finalThreadMessages.length}):`);
-      finalThreadMessages.forEach((msg, idx) => {
-        const content = msg.content || '(empty)';
-        console.error(`  ${idx + 1}. ${content.substring(0, 200)}${content.length > 200 ? '...' : ''}`);
-      });
-      throw new Error('Thread message about reviewer removal not found');
-    }
-    expect(removalMessage).toBeDefined();
-
+    cases.push({
+      name: 'Thread message about reviewer removal',
+      passed: !!removalMessage,
+      detail: removalMessage ? undefined : `Poll timed out after ${maxAttempts * 2}s`,
+    });
+  } else {
+    cases.push({
+      name: 'Thread message about reviewer removal',
+      passed: false,
+      detail: 'No thread on message',
+    });
   }
-  const finalMessage = await ctx.discord.getMessage(initialMessage!.id);
+
+  const finalMessage = await ctx.discord.getMessage(initialMessage.id);
   const author = await ctx.github.getPRAuthor(pr.number);
   const formatCheck = verifyParentMessageFormat(
     finalMessage,
@@ -1035,13 +1009,13 @@ async function test6ReviewerRemoved(ctx: TestContext): Promise<void> {
     },
     'Ready for Review'
   );
-  if (!formatCheck.passed) {
-    console.error('❌ Final message formatting verification failed (after reviewer removed):');
-    formatCheck.errors.forEach((e) => console.error(`  - ${e}`));
-    console.log('\nFinal message content:\n---\n' + finalMessage.content + '\n---');
-    throw new Error(`Final message formatting verification failed:\n${formatCheck.errors.map((e) => `  - ${e}`).join('\n')}\n\nFinal message:\n${finalMessage.content}`);
-  }
-  console.log('✓ Final message format verified');
+  cases.push({
+    name: 'Final message format (no reviewers, Ready for Review)',
+    passed: formatCheck.passed,
+    detail: formatCheck.errors.length ? formatCheck.errors.join('; ') : undefined,
+  });
+
+  reportVerificationResults('Test 6: Reviewer Removed', cases);
   console.log('✅ Test 6 completed successfully!\n');
 }
 
@@ -1086,41 +1060,54 @@ async function test7ReviewApproved(ctx: TestContext): Promise<void> {
   await waitForWorkflow(ctx.github, pr.number, ctx.config.test.workflowTimeout);
   await wait(3000);
 
-  // Get initial Discord message
   const initialMessage = await ctx.discord.findMessageByPR(pr.number, ctx.config.test.discordPollTimeout);
-  expect(initialMessage).toBeDefined();
+  const cases: VerificationCase[] = [];
+
+  cases.push({
+    name: 'Initial Discord message exists',
+    passed: !!initialMessage,
+    detail: initialMessage ? undefined : 'No message found for PR',
+  });
+
+  if (!initialMessage) {
+    reportVerificationResults('Test 7: Review Approved', cases);
+    console.log('✅ Test 7 completed (skipped further checks)\n');
+    return;
+  }
+
   ctx.trackDiscordMessage(initialMessage);
-
-  // Submit approval review
-  // Note: The GitHub App submits the review (not the actual reviewer user)
-  // This allows testing without requiring the reviewer to actually perform actions
-  const review = await ctx.github.submitReview(pr.number, 'APPROVE', 'Looks good!');
-
-  // Wait for workflow (pull_request_review event)
+  await ctx.github.submitReview(pr.number, 'APPROVE', 'Looks good!');
   await waitForWorkflow(ctx.github, pr.number, ctx.config.test.workflowTimeout);
-  
-  // Poll for status update (can take time for Discord to process)
-  let updatedMessage = await ctx.discord.getMessage(initialMessage!.id);
-  let attempts = 0;
-  const maxAttempts = 15; // 15 attempts * 2 seconds = 30 seconds max
-  while (attempts < maxAttempts && !updatedMessage.content.includes('Approved')) {
-    await wait(2000);
-    updatedMessage = await ctx.discord.getMessage(initialMessage!.id);
-    attempts++;
-  }
-  if (attempts >= maxAttempts) {
-    console.warn(`⚠️  Status not updated after ${maxAttempts * 2} seconds`);
+
+  const pollOpts = {
+    maxAttempts: ctx.config.test.discordStatusPollAttempts ?? 45,
+    intervalMs: ctx.config.test.discordPollInterval ?? 2000,
+  };
+  const { message: updatedMessage, matched } = await waitForDiscordUpdate(
+    () => ctx.discord.getMessage(initialMessage.id),
+    (m) => m.content.includes('Approved'),
+    pollOpts
+  );
+  if (!matched) {
+    console.warn(`⚠️  Status not updated after ${pollOpts.maxAttempts * (pollOpts.intervalMs / 1000)} seconds`);
   }
 
-  // Verify ✅ reaction was added
+  cases.push({
+    name: 'Status updated to Approved',
+    passed: updatedMessage.content.includes('Approved'),
+    detail: updatedMessage.content.includes('Approved') ? undefined : `Poll timed out after ${pollOpts.maxAttempts * (pollOpts.intervalMs / 1000)}s`,
+  });
+
   const reactionCheck = verifyReaction(updatedMessage, '✅', true);
-  if (!reactionCheck.passed) {
-    console.warn(`⚠️  Reaction check: ${reactionCheck.error}`);
-    // Still continue - reaction might take longer
-  }
+  cases.push({
+    name: '✅ reaction on message',
+    passed: reactionCheck.passed,
+    detail: reactionCheck.error,
+  });
 
   await wait(5000);
   const author = await ctx.github.getPRAuthor(pr.number);
+  const reviewBot = ctx.config.test.reviewBotUsername ?? 'discord-pr-e2e-review-operations';
   const formatCheck = verifyParentMessageFormat(
     updatedMessage,
     {
@@ -1135,25 +1122,55 @@ async function test7ReviewApproved(ctx: TestContext): Promise<void> {
       reviewers: [reviewer],
     },
     'Approved',
-    reviewer
+    [reviewBot, reviewer]  // Status shows approver: bot when using review auth
   );
-  if (!formatCheck.passed) {
-    console.error('❌ Final message formatting verification failed:');
-    formatCheck.errors.forEach((e) => console.error(`  - ${e}`));
-    console.log('\nFinal message content:\n---\n' + updatedMessage.content + '\n---');
-    throw new Error(`Final message formatting verification failed:\n${formatCheck.errors.map((e) => `  - ${e}`).join('\n')}\n\nFinal message:\n${updatedMessage.content}`);
-  }
-  console.log('✓ Final message format verified');
+  cases.push({
+    name: 'Parent message format (Approved, reviewer)',
+    passed: formatCheck.passed,
+    detail: formatCheck.errors.length ? formatCheck.errors.join('; ') : undefined,
+  });
 
   if (updatedMessage.thread) {
     const threadMessages = await ctx.discord.getThreadMessages(updatedMessage.thread.id, 10);
     const approvalMessage = threadMessages.find((msg) =>
-      msg.content.includes('approved') && (msg.content.includes(reviewer) || msg.content.includes('@'))
+      msg.content.includes('approved') && (msg.content.includes(reviewer) || msg.content.includes(reviewBot) || msg.content.includes('@'))
     );
-    expect(approvalMessage).toBeDefined();
+    cases.push({
+      name: 'Thread approval message exists',
+      passed: !!approvalMessage,
+      detail: approvalMessage ? undefined : 'No approval message in thread',
+    });
+    const reviewComment = 'Looks good!';
+    cases.push({
+      name: `Thread message contains approval comment "${reviewComment}"`,
+      passed: !!approvalMessage?.content?.includes(reviewComment),
+      detail: approvalMessage?.content?.includes(reviewComment) ? undefined : `Comment "${reviewComment}" not found`,
+    });
     const threadState = await verifyThreadState(ctx.discord, updatedMessage.thread.id, true, undefined);
-    expect(threadState.passed).toBe(true);
+    cases.push({
+      name: 'Thread locked after approval',
+      passed: threadState.passed,
+      detail: threadState.error,
+    });
+  } else {
+    cases.push({
+      name: 'Thread approval message exists',
+      passed: false,
+      detail: 'No thread on message',
+    });
+    cases.push({
+      name: `Thread message contains approval comment "Looks good!"`,
+      passed: false,
+      detail: 'No thread on message',
+    });
+    cases.push({
+      name: 'Thread locked after approval',
+      passed: false,
+      detail: 'No thread on message',
+    });
   }
+
+  reportVerificationResults('Test 7: Review Approved', cases);
   console.log('✅ Test 7 completed successfully!\n');
 }
 
@@ -1198,43 +1215,61 @@ async function test8ChangesRequested(ctx: TestContext): Promise<void> {
   await waitForWorkflow(ctx.github, pr.number, ctx.config.test.workflowTimeout);
   await wait(3000);
 
-  // Get initial Discord message
   const initialMessage = await ctx.discord.findMessageByPR(pr.number, ctx.config.test.discordPollTimeout);
-  expect(initialMessage).toBeDefined();
+  const cases: VerificationCase[] = [];
+
+  cases.push({
+    name: 'Initial Discord message exists',
+    passed: !!initialMessage,
+    detail: initialMessage ? undefined : 'No message found for PR',
+  });
+
+  if (!initialMessage) {
+    reportVerificationResults('Test 8: Changes Requested', cases);
+    console.log('✅ Test 8 completed (skipped further checks)\n');
+    return;
+  }
+
   ctx.trackDiscordMessage(initialMessage);
-
-  // Submit changes requested review
-  // Note: The GitHub App submits the review (not the actual reviewer user)
-  // This allows testing without requiring the reviewer to actually perform actions
-  const review = await ctx.github.submitReview(pr.number, 'REQUEST_CHANGES', 'Please fix these issues');
-
-  // Wait for workflow
+  await ctx.github.submitReview(pr.number, 'REQUEST_CHANGES', 'Please fix these issues');
   await waitForWorkflow(ctx.github, pr.number, ctx.config.test.workflowTimeout);
-  
-  // Poll for status update (can take time for Discord to process)
-  let updatedMessage = await ctx.discord.getMessage(initialMessage!.id);
-  let attempts = 0;
-  const maxAttempts = 15; // 15 attempts * 2 seconds = 30 seconds max
-  while (attempts < maxAttempts && !updatedMessage.content.includes('Changes Requested')) {
-    await wait(2000);
-    updatedMessage = await ctx.discord.getMessage(initialMessage!.id);
-    attempts++;
-  }
-  if (attempts >= maxAttempts) {
-    console.warn(`⚠️  Status not updated after ${maxAttempts * 2} seconds`);
+
+  const pollOpts = {
+    maxAttempts: ctx.config.test.discordStatusPollAttempts ?? 45,
+    intervalMs: ctx.config.test.discordPollInterval ?? 2000,
+  };
+  const { message: updatedMessage, matched } = await waitForDiscordUpdate(
+    () => ctx.discord.getMessage(initialMessage.id),
+    (m) => m.content.includes('Changes Requested'),
+    pollOpts
+  );
+  if (!matched) {
+    console.warn(`⚠️  Status not updated after ${pollOpts.maxAttempts * (pollOpts.intervalMs / 1000)} seconds`);
   }
 
-  // Verify ❌ reaction was added
-  const reactionCheck = verifyReaction(updatedMessage, '❌', true);
-  if (!reactionCheck.passed) {
-    console.warn(`⚠️  Reaction check: ${reactionCheck.error}`);
-    // Still continue - reaction might take longer
-  }
+  cases.push({
+    name: 'Status updated to Changes Requested',
+    passed: updatedMessage.content.includes('Changes Requested'),
+    detail: updatedMessage.content.includes('Changes Requested') ? undefined : `Poll timed out after ${pollOpts.maxAttempts * (pollOpts.intervalMs / 1000)}s`,
+  });
 
+  // Wait additional time for Discord to fully process the review and thread message
   await wait(5000);
+  
+  // Re-fetch message to ensure we have latest state (thread might be populated now)
+  const refreshedMessage = await ctx.discord.getMessage(initialMessage.id);
+  
+  const reactionCheck = verifyReaction(refreshedMessage, '❌', true);
+  cases.push({
+    name: '❌ reaction on message',
+    passed: reactionCheck.passed,
+    detail: reactionCheck.error,
+  });
+  
   const author = await ctx.github.getPRAuthor(pr.number);
+  const reviewBot = ctx.config.test.reviewBotUsername ?? 'discord-pr-e2e-review-operations';
   const formatCheck = verifyParentMessageFormat(
-    updatedMessage,
+    refreshedMessage,
     {
       hasReviewers: true,
       prNumber: pr.number,
@@ -1247,26 +1282,69 @@ async function test8ChangesRequested(ctx: TestContext): Promise<void> {
       reviewers: [reviewer],
     },
     'Changes Requested',
-    reviewer
+    [reviewBot, reviewer]  // Status shows requester: bot when using review auth
   );
-  if (!formatCheck.passed) {
-    console.error('❌ Final message formatting verification failed:');
-    formatCheck.errors.forEach((e) => console.error(`  - ${e}`));
-    console.log('\nFinal message content:\n---\n' + updatedMessage.content + '\n---');
-    throw new Error(`Final message formatting verification failed:\n${formatCheck.errors.map((e) => `  - ${e}`).join('\n')}\n\nFinal message:\n${updatedMessage.content}`);
-  }
-  console.log('✓ Final message format verified');
+  cases.push({
+    name: 'Parent message format (Changes Requested, reviewer)',
+    passed: formatCheck.passed,
+    detail: formatCheck.errors.length ? formatCheck.errors.join('; ') : undefined,
+  });
 
-  if (updatedMessage.thread) {
-    const threadMessages = await ctx.discord.getThreadMessages(updatedMessage.thread.id, 10);
-    const changesMessage = threadMessages.find((msg) =>
-      msg.content.includes('changes have been requested') && (msg.content.includes(reviewer) || msg.content.includes('@'))
+  if (refreshedMessage.thread) {
+    // Poll for thread message - it may take additional time to appear
+    const threadPollOpts = { maxAttempts: pollOpts.maxAttempts, intervalMs: pollOpts.intervalMs };
+    const { message: threadMessagesResult } = await waitForDiscordUpdate(
+      async () => ctx.discord.getThreadMessages(refreshedMessage.thread!.id, 10),
+      (msgs) => msgs.some((m) =>
+        m.content.includes('changes have been requested') && (m.content.includes(reviewer) || m.content.includes(reviewBot) || m.content.includes('@'))
+      ),
+      threadPollOpts
     );
-    expect(changesMessage).toBeDefined();
-    expect(changesMessage?.content).toContain('Please fix these issues');
-    const threadState = await verifyThreadState(ctx.discord, updatedMessage.thread.id, false, undefined);
-    expect(threadState.passed).toBe(true);
+    const changesMessage = threadMessagesResult.find((msg) =>
+      msg.content.includes('changes have been requested') && (msg.content.includes(reviewer) || msg.content.includes(reviewBot) || msg.content.includes('@'))
+    );
+    
+    if (!changesMessage) {
+      console.warn(`⚠️  Thread message not found after ${threadPollOpts.maxAttempts * (threadPollOpts.intervalMs / 1000)} seconds`);
+    }
+    
+    cases.push({
+      name: 'Thread changes-requested message exists',
+      passed: !!changesMessage,
+      detail: changesMessage ? undefined : `Poll timed out after ${threadPollOpts.maxAttempts * (threadPollOpts.intervalMs / 1000)}s`,
+    });
+    cases.push({
+      name: 'Thread message contains comment "Please fix these issues"',
+      passed: !!changesMessage?.content?.includes('Please fix these issues'),
+      detail: changesMessage?.content?.includes('Please fix these issues')
+        ? undefined
+        : 'Comment "Please fix these issues" not found',
+    });
+    const threadState = await verifyThreadState(ctx.discord, refreshedMessage.thread.id, false, undefined);
+    cases.push({
+      name: 'Thread not locked (changes requested)',
+      passed: threadState.passed,
+      detail: threadState.error,
+    });
+  } else {
+    cases.push({
+      name: 'Thread changes-requested message exists',
+      passed: false,
+      detail: 'No thread on message',
+    });
+    cases.push({
+      name: 'Thread message contains comment "Please fix these issues"',
+      passed: false,
+      detail: 'No thread on message',
+    });
+    cases.push({
+      name: 'Thread not locked (changes requested)',
+      passed: false,
+      detail: 'No thread on message',
+    });
   }
+
+  reportVerificationResults('Test 8: Changes Requested', cases);
   console.log('✅ Test 8 completed successfully!\n');
 }
 
@@ -1310,26 +1388,48 @@ async function test9ReviewCommentOnly(ctx: TestContext): Promise<void> {
   await waitForWorkflow(ctx.github, pr.number, ctx.config.test.workflowTimeout);
   await wait(3000);
 
-  // Get initial Discord message
   const initialMessage = await ctx.discord.findMessageByPR(pr.number, ctx.config.test.discordPollTimeout);
-  expect(initialMessage).toBeDefined();
+  const cases: VerificationCase[] = [];
+
+  cases.push({
+    name: 'Initial Discord message exists',
+    passed: !!initialMessage,
+    detail: initialMessage ? undefined : 'No message found for PR',
+  });
+
+  if (!initialMessage) {
+    reportVerificationResults('Test 9: Review Comment Only', cases);
+    console.log('✅ Test 9 completed (skipped further checks)\n');
+    return;
+  }
+
   ctx.trackDiscordMessage(initialMessage);
-  const initialContent = initialMessage!.content;
+  const initialContent = initialMessage.content;
 
-  // Submit comment-only review
-  // Note: The GitHub App submits the review (not the actual reviewer user)
-  const review = await ctx.github.submitReview(pr.number, 'COMMENT', 'Just a comment, no approval or changes');
-
-  // Wait for workflow
+  await ctx.github.submitReview(pr.number, 'COMMENT', 'Just a comment, no approval or changes');
   await waitForWorkflow(ctx.github, pr.number, ctx.config.test.workflowTimeout);
   await wait(5000);
 
-  const updatedMessage = await ctx.discord.getMessage(initialMessage!.id);
-  expect(updatedMessage.content).toBe(initialContent);
+  const updatedMessage = await ctx.discord.getMessage(initialMessage.id);
+  cases.push({
+    name: 'Message content unchanged after comment-only review',
+    passed: updatedMessage.content === initialContent,
+    detail: updatedMessage.content === initialContent ? undefined : 'Content changed',
+  });
+
   const reactionCheck = verifyReaction(updatedMessage, '✅', false);
-  expect(reactionCheck.passed).toBe(true);
+  cases.push({
+    name: 'No ✅ reaction (comment-only)',
+    passed: reactionCheck.passed,
+    detail: reactionCheck.error,
+  });
+
   const reactionCheck2 = verifyReaction(updatedMessage, '❌', false);
-  expect(reactionCheck2.passed).toBe(true);
+  cases.push({
+    name: 'No ❌ reaction (comment-only)',
+    passed: reactionCheck2.passed,
+    detail: reactionCheck2.error,
+  });
 
   const author = await ctx.github.getPRAuthor(pr.number);
   const formatCheck = verifyParentMessageFormat(
@@ -1347,13 +1447,13 @@ async function test9ReviewCommentOnly(ctx: TestContext): Promise<void> {
     },
     'Ready for Review'
   );
-  if (!formatCheck.passed) {
-    console.error('❌ Final message formatting verification failed:');
-    formatCheck.errors.forEach((e) => console.error(`  - ${e}`));
-    console.log('\nFinal message content:\n---\n' + updatedMessage.content + '\n---');
-    throw new Error(`Final message formatting verification failed:\n${formatCheck.errors.map((e) => `  - ${e}`).join('\n')}\n\nFinal message:\n${updatedMessage.content}`);
-  }
-  console.log('✓ Final message format verified');
+  cases.push({
+    name: 'Parent message format still Ready for Review',
+    passed: formatCheck.passed,
+    detail: formatCheck.errors.length ? formatCheck.errors.join('; ') : undefined,
+  });
+
+  reportVerificationResults('Test 9: Review Comment Only', cases);
   console.log('✅ Test 9 completed successfully!\n');
 }
 
@@ -1397,40 +1497,58 @@ async function test10ReviewDismissed(ctx: TestContext): Promise<void> {
   await waitForWorkflow(ctx.github, pr.number, ctx.config.test.workflowTimeout);
   await wait(3000);
 
-  // Submit changes requested review
   const review = await ctx.github.submitReview(pr.number, 'REQUEST_CHANGES', 'Please fix');
-
-  // Wait for workflow
   await waitForWorkflow(ctx.github, pr.number, ctx.config.test.workflowTimeout);
   await wait(3000);
 
-  // Get message after changes requested
   const changesMessage = await ctx.discord.findMessageByPR(pr.number, ctx.config.test.discordPollTimeout);
-  expect(changesMessage?.content).toContain('Changes Requested');
+  const cases: VerificationCase[] = [];
+
+  cases.push({
+    name: 'Message exists after changes requested',
+    passed: !!changesMessage,
+    detail: changesMessage ? undefined : 'No message found for PR',
+  });
+
+  if (!changesMessage) {
+    reportVerificationResults('Test 10: Review Dismissed', cases);
+    console.log('✅ Test 10 completed (skipped further checks)\n');
+    return;
+  }
+
+  cases.push({
+    name: 'Message shows Changes Requested before dismiss',
+    passed: !!changesMessage.content?.includes('Changes Requested'),
+    detail: changesMessage.content?.includes('Changes Requested') ? undefined : 'Message does not contain "Changes Requested"',
+  });
   ctx.trackDiscordMessage(changesMessage);
 
-  // Dismiss the review
   await ctx.github.dismissReview(pr.number, review.id, 'Changes have been addressed');
-
-  // Wait for workflow (review dismissed event)
   await waitForWorkflow(ctx.github, pr.number, ctx.config.test.workflowTimeout);
-  
-  // Poll for status reset (can take time for Discord to process)
-  let updatedMessage = await ctx.discord.getMessage(changesMessage!.id);
-  let attempts = 0;
-  const maxAttempts = 15; // 15 attempts * 2 seconds = 30 seconds max
-  while (attempts < maxAttempts && updatedMessage.content.includes('Changes Requested')) {
-    await wait(2000);
-    updatedMessage = await ctx.discord.getMessage(changesMessage!.id);
-    attempts++;
-  }
-  if (attempts >= maxAttempts) {
-    console.warn(`⚠️  Status not reset after ${maxAttempts * 2} seconds`);
+  await wait(5000);  // Extra buffer for handle-review-dismissed (separate job from handle-pr-review)
+
+  const pollOpts = {
+    maxAttempts: ctx.config.test.discordStatusPollAttempts ?? 45,
+    intervalMs: ctx.config.test.discordPollInterval ?? 2000,
+  };
+  const { message: updatedMessage, matched } = await waitForDiscordUpdate(
+    () => ctx.discord.getMessage(changesMessage.id),
+    (m) => !m.content.includes('Changes Requested'),
+    pollOpts
+  );
+  if (!matched) {
+    console.warn(`⚠️  Status not reset after ${pollOpts.maxAttempts * (pollOpts.intervalMs / 1000)} seconds`);
   }
 
-  expect(updatedMessage.content).not.toContain('Changes Requested');
+  cases.push({
+    name: 'Status reset: no longer Changes Requested',
+    passed: !updatedMessage.content.includes('Changes Requested'),
+    detail: updatedMessage.content.includes('Changes Requested')
+      ? `Poll timed out after ${pollOpts.maxAttempts * (pollOpts.intervalMs / 1000)}s`
+      : undefined,
+  });
+
   await wait(5000);
-
   const author = await ctx.github.getPRAuthor(pr.number);
   const formatCheck = verifyParentMessageFormat(
     updatedMessage,
@@ -1447,21 +1565,31 @@ async function test10ReviewDismissed(ctx: TestContext): Promise<void> {
     },
     'Ready for Review'
   );
-  if (!formatCheck.passed) {
-    console.error('❌ Final message formatting verification failed:');
-    formatCheck.errors.forEach((e) => console.error(`  - ${e}`));
-    console.log('\nFinal message content:\n---\n' + updatedMessage.content + '\n---');
-    throw new Error(`Final message formatting verification failed:\n${formatCheck.errors.map((e) => `  - ${e}`).join('\n')}\n\nFinal message:\n${updatedMessage.content}`);
-  }
-  console.log('✓ Final message format verified');
+  cases.push({
+    name: 'Parent message format (Ready for Review after dismiss)',
+    passed: formatCheck.passed,
+    detail: formatCheck.errors.length ? formatCheck.errors.join('; ') : undefined,
+  });
 
   if (updatedMessage.thread) {
     const threadMessages = await ctx.discord.getThreadMessages(updatedMessage.thread.id, 10);
     const dismissalMessage = threadMessages.find((msg) =>
       msg.content.includes('addressed') || msg.content.includes('dismissed')
     );
-    expect(dismissalMessage).toBeDefined();
+    cases.push({
+      name: 'Thread dismissal message (addressed/dismissed)',
+      passed: !!dismissalMessage,
+      detail: dismissalMessage ? undefined : 'No dismissal message in thread',
+    });
+  } else {
+    cases.push({
+      name: 'Thread dismissal message (addressed/dismissed)',
+      passed: false,
+      detail: 'No thread on message',
+    });
   }
+
+  reportVerificationResults('Test 10: Review Dismissed', cases);
   console.log('✅ Test 10 completed successfully!\n');
 }
 
@@ -1512,25 +1640,51 @@ async function test11ReviewDismissedApproved(ctx: TestContext): Promise<void> {
   await waitForWorkflow(ctx.github, pr.number, ctx.config.test.workflowTimeout);
   await wait(3000);
 
-  // Get message after approval
   const approvalMessage = await ctx.discord.findMessageByPR(pr.number, ctx.config.test.discordPollTimeout);
-  expect(approvalMessage?.content).toContain('Approved');
+  const cases: VerificationCase[] = [];
+
+  cases.push({
+    name: 'Message exists after approval',
+    passed: !!approvalMessage,
+    detail: approvalMessage ? undefined : 'No message found for PR',
+  });
+
+  if (!approvalMessage) {
+    reportVerificationResults('Test 11: Review Dismissed (Approved)', cases);
+    console.log('✅ Test 11 completed (skipped further checks)\n');
+    return;
+  }
+
+  cases.push({
+    name: 'Message shows Approved before dismiss',
+    passed: !!approvalMessage.content?.includes('Approved'),
+    detail: approvalMessage.content?.includes('Approved') ? undefined : 'Message does not contain "Approved"',
+  });
   ctx.trackDiscordMessage(approvalMessage);
 
-  const approvalContent = approvalMessage!.content;
-  const approvalReactions = approvalMessage!.reactions || [];
+  const approvalContent = approvalMessage.content;
+  const approvalReactions = approvalMessage.reactions || [];
 
-  // Dismiss the approved review
   await ctx.github.dismissReview(pr.number, review.id, 'Dismissing approval');
-
-  // Wait a bit (workflow should skip processing)
   await wait(10000);
 
-  const updatedMessage = await ctx.discord.getMessage(approvalMessage!.id);
-  expect(updatedMessage.content).toBe(approvalContent);
-  expect(updatedMessage.reactions?.length || 0).toBe(approvalReactions.length);
+  const updatedMessage = await ctx.discord.getMessage(approvalMessage.id);
+  cases.push({
+    name: 'Message unchanged after dismissing approved review',
+    passed: updatedMessage.content === approvalContent,
+    detail: updatedMessage.content === approvalContent ? undefined : 'Content changed',
+  });
+  cases.push({
+    name: 'Reactions unchanged after dismissing approved review',
+    passed: (updatedMessage.reactions?.length || 0) === approvalReactions.length,
+    detail:
+      (updatedMessage.reactions?.length || 0) === approvalReactions.length
+        ? undefined
+        : `Reactions: ${updatedMessage.reactions?.length ?? 0} vs ${approvalReactions.length}`,
+  });
 
   const author = await ctx.github.getPRAuthor(pr.number);
+  const reviewBot = ctx.config.test.reviewBotUsername ?? 'discord-pr-e2e-review-operations';
   const formatCheck = verifyParentMessageFormat(
     updatedMessage,
     {
@@ -1545,15 +1699,15 @@ async function test11ReviewDismissedApproved(ctx: TestContext): Promise<void> {
       reviewers: [reviewer],
     },
     'Approved',
-    reviewer
+    [reviewBot, reviewer]  // Status shows approver: bot when using review auth
   );
-  if (!formatCheck.passed) {
-    console.error('❌ Final message formatting verification failed:');
-    formatCheck.errors.forEach((e) => console.error(`  - ${e}`));
-    console.log('\nFinal message content:\n---\n' + updatedMessage.content + '\n---');
-    throw new Error(`Final message formatting verification failed:\n${formatCheck.errors.map((e) => `  - ${e}`).join('\n')}\n\nFinal message:\n${updatedMessage.content}`);
-  }
-  console.log('✓ Final message format verified');
+  cases.push({
+    name: 'Parent message format still Approved (workflow skips)',
+    passed: formatCheck.passed,
+    detail: formatCheck.errors.length ? formatCheck.errors.join('; ') : undefined,
+  });
+
+  reportVerificationResults('Test 11: Review Dismissed (Approved)', cases);
   console.log('✅ Test 11 completed successfully!\n');
 }
 
@@ -1604,39 +1758,62 @@ async function test12PRSynchronizeAfterApproval(ctx: TestContext): Promise<void>
   await waitForWorkflow(ctx.github, pr.number, ctx.config.test.workflowTimeout);
   await wait(3000);
 
-  // Get message after approval
   const approvalMessage = await ctx.discord.findMessageByPR(pr.number, ctx.config.test.discordPollTimeout);
-  expect(approvalMessage?.content).toContain('Approved');
+  const cases: VerificationCase[] = [];
+
+  cases.push({
+    name: 'Message exists after approval',
+    passed: !!approvalMessage,
+    detail: approvalMessage ? undefined : 'No message found for PR',
+  });
+
+  if (!approvalMessage) {
+    reportVerificationResults('Test 12: PR Synchronize (After Approval)', cases);
+    console.log('✅ Test 12 completed (skipped further checks)\n');
+    return;
+  }
+
+  cases.push({
+    name: 'Message shows Approved before sync',
+    passed: !!approvalMessage.content?.includes('Approved'),
+    detail: approvalMessage.content?.includes('Approved') ? undefined : 'Message does not contain "Approved"',
+  });
   ctx.trackDiscordMessage(approvalMessage);
 
-  // Verify thread is locked
-  if (approvalMessage?.thread) {
+  if (approvalMessage.thread) {
     const threadStateBefore = await verifyThreadState(ctx.discord, approvalMessage.thread.id, true, undefined);
-    expect(threadStateBefore.passed).toBe(true);
+    cases.push({
+      name: 'Thread locked after approval (before sync)',
+      passed: threadStateBefore.passed,
+      detail: threadStateBefore.error,
+    });
   }
 
-  // Push new commit (synchronize)
   await ctx.github.createCommit(branchName, `${commitMessage} - Update`, `${fileContent}\n\nUpdate`, `test-${testId}.txt`);
-
-  // Wait for workflow (synchronize event)
   await waitForWorkflow(ctx.github, pr.number, ctx.config.test.workflowTimeout);
-  
-  // Poll for status reset and thread unlock (can take time for Discord to process)
-  let updatedMessage = await ctx.discord.getMessage(approvalMessage!.id);
-  let attempts = 0;
-  const maxAttempts = 15; // 15 attempts * 2 seconds = 30 seconds max
-  while (attempts < maxAttempts && updatedMessage.content.includes('Approved')) {
-    await wait(2000);
-    updatedMessage = await ctx.discord.getMessage(approvalMessage!.id);
-    attempts++;
-  }
-  if (attempts >= maxAttempts) {
-    console.warn(`⚠️  Status not reset after ${maxAttempts * 2} seconds`);
+
+  const pollOpts = {
+    maxAttempts: ctx.config.test.discordStatusPollAttempts ?? 45,
+    intervalMs: ctx.config.test.discordPollInterval ?? 2000,
+  };
+  const { message: updatedMessage, matched } = await waitForDiscordUpdate(
+    () => ctx.discord.getMessage(approvalMessage.id),
+    (m) => !m.content.includes('Approved'),
+    pollOpts
+  );
+  if (!matched) {
+    console.warn(`⚠️  Status not reset after ${pollOpts.maxAttempts * (pollOpts.intervalMs / 1000)} seconds`);
   }
 
-  expect(updatedMessage.content).not.toContain('Approved');
+  cases.push({
+    name: 'Status reset: no longer Approved after sync',
+    passed: !updatedMessage.content.includes('Approved'),
+    detail: updatedMessage.content.includes('Approved')
+      ? `Poll timed out after ${pollOpts.maxAttempts * (pollOpts.intervalMs / 1000)}s`
+      : undefined,
+  });
+
   await wait(5000);
-
   const author = await ctx.github.getPRAuthor(pr.number);
   const formatCheck = verifyParentMessageFormat(
     updatedMessage,
@@ -1653,21 +1830,40 @@ async function test12PRSynchronizeAfterApproval(ctx: TestContext): Promise<void>
     },
     'Ready for Review'
   );
-  if (!formatCheck.passed) {
-    console.error('❌ Final message formatting verification failed:');
-    formatCheck.errors.forEach((e) => console.error(`  - ${e}`));
-    console.log('\nFinal message content:\n---\n' + updatedMessage.content + '\n---');
-    throw new Error(`Final message formatting verification failed:\n${formatCheck.errors.map((e) => `  - ${e}`).join('\n')}\n\nFinal message:\n${updatedMessage.content}`);
-  }
-  console.log('✓ Final message format verified');
+  cases.push({
+    name: 'Parent message format (Ready for Review after sync)',
+    passed: formatCheck.passed,
+    detail: formatCheck.errors.length ? formatCheck.errors.join('; ') : undefined,
+  });
 
   if (updatedMessage.thread) {
     const threadStateAfter = await verifyThreadState(ctx.discord, updatedMessage.thread.id, false, undefined);
-    expect(threadStateAfter.passed).toBe(true);
+    cases.push({
+      name: 'Thread unlocked after sync',
+      passed: threadStateAfter.passed,
+      detail: threadStateAfter.error,
+    });
     const threadMessages = await ctx.discord.getThreadMessages(updatedMessage.thread.id, 10);
     const syncMessage = threadMessages.find((msg) => msg.content.includes('New commits have been pushed'));
-    expect(syncMessage).toBeDefined();
+    cases.push({
+      name: 'Thread "New commits have been pushed" message',
+      passed: !!syncMessage,
+      detail: syncMessage ? undefined : 'No sync message in thread',
+    });
+  } else {
+    cases.push({
+      name: 'Thread unlocked after sync',
+      passed: false,
+      detail: 'No thread on message',
+    });
+    cases.push({
+      name: 'Thread "New commits have been pushed" message',
+      passed: false,
+      detail: 'No thread on message',
+    });
   }
+
+  reportVerificationResults('Test 12: PR Synchronize (After Approval)', cases);
   console.log('✅ Test 12 completed successfully!\n');
 }
 
@@ -1709,21 +1905,33 @@ async function test13PRSynchronizeNoApproval(ctx: TestContext): Promise<void> {
   await waitForWorkflow(ctx.github, pr.number, ctx.config.test.workflowTimeout);
   await wait(3000);
 
-  // Get initial message
   const initialMessage = await ctx.discord.findMessageByPR(pr.number, ctx.config.test.discordPollTimeout);
-  expect(initialMessage).toBeDefined();
+  const cases: VerificationCase[] = [];
+
+  cases.push({
+    name: 'Initial Discord message exists',
+    passed: !!initialMessage,
+    detail: initialMessage ? undefined : 'No message found for PR',
+  });
+
+  if (!initialMessage) {
+    reportVerificationResults('Test 13: PR Synchronize (No Approval)', cases);
+    console.log('✅ Test 13 completed (skipped further checks)\n');
+    return;
+  }
+
   ctx.trackDiscordMessage(initialMessage);
+  const initialContent = initialMessage.content;
 
-  const initialContent = initialMessage!.content;
-
-  // Push new commit (synchronize)
   await ctx.github.createCommit(branchName, `${commitMessage} - Update`, `${fileContent}\n\nUpdate`, `test-${testId}.txt`);
-
-  // Wait a bit (workflow should skip processing)
   await wait(10000);
 
-  const updatedMessage = await ctx.discord.getMessage(initialMessage!.id);
-  expect(updatedMessage.content).toBe(initialContent);
+  const updatedMessage = await ctx.discord.getMessage(initialMessage.id);
+  cases.push({
+    name: 'Message unchanged after sync (no approval)',
+    passed: updatedMessage.content === initialContent,
+    detail: updatedMessage.content === initialContent ? undefined : 'Content changed',
+  });
 
   const author = await ctx.github.getPRAuthor(pr.number);
   const formatCheck = verifyParentMessageFormat(
@@ -1740,13 +1948,13 @@ async function test13PRSynchronizeNoApproval(ctx: TestContext): Promise<void> {
     },
     'Ready for Review'
   );
-  if (!formatCheck.passed) {
-    console.error('❌ Final message formatting verification failed:');
-    formatCheck.errors.forEach((e) => console.error(`  - ${e}`));
-    console.log('\nFinal message content:\n---\n' + updatedMessage.content + '\n---');
-    throw new Error(`Final message formatting verification failed:\n${formatCheck.errors.map((e) => `  - ${e}`).join('\n')}\n\nFinal message:\n${updatedMessage.content}`);
-  }
-  console.log('✓ Final message format verified');
+  cases.push({
+    name: 'Parent message format (Ready for Review, workflow skips)',
+    passed: formatCheck.passed,
+    detail: formatCheck.errors.length ? formatCheck.errors.join('; ') : undefined,
+  });
+
+  reportVerificationResults('Test 13: PR Synchronize (No Approval)', cases);
   console.log('✅ Test 13 completed successfully!\n');
 }
 
@@ -1788,35 +1996,53 @@ async function test14PRClosed(ctx: TestContext): Promise<void> {
   await waitForWorkflow(ctx.github, pr.number, ctx.config.test.workflowTimeout);
   await wait(3000);
 
-  // Get initial Discord message
   const initialMessage = await ctx.discord.findMessageByPR(pr.number, ctx.config.test.discordPollTimeout);
-  expect(initialMessage).toBeDefined();
+  const cases: VerificationCase[] = [];
+
+  cases.push({
+    name: 'Initial Discord message exists',
+    passed: !!initialMessage,
+    detail: initialMessage ? undefined : 'No message found for PR',
+  });
+
+  if (!initialMessage) {
+    reportVerificationResults('Test 14: PR Closed', cases);
+    console.log('✅ Test 14 completed (skipped further checks)\n');
+    return;
+  }
+
   ctx.trackDiscordMessage(initialMessage);
 
-  // Verify thread is not locked initially
-  if (initialMessage?.thread) {
+  if (initialMessage.thread) {
     const threadStateBefore = await verifyThreadState(ctx.discord, initialMessage.thread.id, false, undefined);
-    expect(threadStateBefore.passed).toBe(true);
+    cases.push({
+      name: 'Thread not locked initially',
+      passed: threadStateBefore.passed,
+      detail: threadStateBefore.error,
+    });
   }
 
-  // Close PR
   await ctx.github.closePR(pr.number);
-
-  // Wait for workflow (closed event)
   await waitForWorkflow(ctx.github, pr.number, ctx.config.test.workflowTimeout);
-  
-  // Poll for status update (can take time for Discord to process)
-  let updatedMessage = await ctx.discord.getMessage(initialMessage!.id);
-  let attempts = 0;
-  const maxAttempts = 15; // 15 attempts * 2 seconds = 30 seconds max
-  while (attempts < maxAttempts && !updatedMessage.content.includes('Closed')) {
-    await wait(2000);
-    updatedMessage = await ctx.discord.getMessage(initialMessage!.id);
-    attempts++;
+
+  const pollOpts = {
+    maxAttempts: ctx.config.test.discordStatusPollAttempts ?? 45,
+    intervalMs: ctx.config.test.discordPollInterval ?? 2000,
+  };
+  const { message: updatedMessage, matched } = await waitForDiscordUpdate(
+    () => ctx.discord.getMessage(initialMessage.id),
+    (m) => m.content.includes('Closed'),
+    pollOpts
+  );
+  if (!matched) {
+    console.warn(`⚠️  Status not updated after ${pollOpts.maxAttempts * (pollOpts.intervalMs / 1000)} seconds`);
   }
-  if (attempts >= maxAttempts) {
-    console.warn(`⚠️  Status not updated after ${maxAttempts * 2} seconds`);
-  }
+
+  cases.push({
+    name: 'Status updated to Closed',
+    passed: updatedMessage.content.includes('Closed'),
+    detail: updatedMessage.content.includes('Closed') ? undefined : `Poll timed out after ${pollOpts.maxAttempts * (pollOpts.intervalMs / 1000)}s`,
+  });
 
   await wait(5000);
   const author = await ctx.github.getPRAuthor(pr.number);
@@ -1834,21 +2060,40 @@ async function test14PRClosed(ctx: TestContext): Promise<void> {
     },
     'Closed'
   );
-  if (!formatCheck.passed) {
-    console.error('❌ Final message formatting verification failed:');
-    formatCheck.errors.forEach((e) => console.error(`  - ${e}`));
-    console.log('\nFinal message content:\n---\n' + updatedMessage.content + '\n---');
-    throw new Error(`Final message formatting verification failed:\n${formatCheck.errors.map((e) => `  - ${e}`).join('\n')}\n\nFinal message:\n${updatedMessage.content}`);
-  }
-  console.log('✓ Final message format verified');
+  cases.push({
+    name: 'Parent message format (Closed)',
+    passed: formatCheck.passed,
+    detail: formatCheck.errors.length ? formatCheck.errors.join('; ') : undefined,
+  });
 
   if (updatedMessage.thread) {
     const threadStateAfter = await verifyThreadState(ctx.discord, updatedMessage.thread.id, true, undefined);
-    expect(threadStateAfter.passed).toBe(true);
+    cases.push({
+      name: 'Thread locked after close',
+      passed: threadStateAfter.passed,
+      detail: threadStateAfter.error,
+    });
     const threadMessages = await ctx.discord.getThreadMessages(updatedMessage.thread.id, 10);
     const closeMessage = threadMessages.find((msg) => msg.content.includes('closed'));
-    expect(closeMessage).toBeDefined();
+    cases.push({
+      name: 'Thread close message',
+      passed: !!closeMessage,
+      detail: closeMessage ? undefined : 'No "closed" message in thread',
+    });
+  } else {
+    cases.push({
+      name: 'Thread locked after close',
+      passed: false,
+      detail: 'No thread on message',
+    });
+    cases.push({
+      name: 'Thread close message',
+      passed: false,
+      detail: 'No thread on message',
+    });
   }
+
+  reportVerificationResults('Test 14: PR Closed', cases);
   console.log('✅ Test 14 completed successfully!\n');
 }
 
@@ -1890,37 +2135,52 @@ async function test15PRMerged(ctx: TestContext): Promise<void> {
   await waitForWorkflow(ctx.github, pr.number, ctx.config.test.workflowTimeout);
   await wait(3000);
 
-  // Get initial Discord message
   const initialMessage = await ctx.discord.findMessageByPR(pr.number, ctx.config.test.discordPollTimeout);
-  expect(initialMessage).toBeDefined();
+  const cases: VerificationCase[] = [];
+
+  cases.push({
+    name: 'Initial Discord message exists',
+    passed: !!initialMessage,
+    detail: initialMessage ? undefined : 'No message found for PR',
+  });
+
+  if (!initialMessage) {
+    reportVerificationResults('Test 15: PR Merged', cases);
+    console.log('✅ Test 15 completed (skipped further checks)\n');
+    return;
+  }
+
   ctx.trackDiscordMessage(initialMessage);
-
-  // Merge PR
   await ctx.github.mergePR(pr.number, 'merge');
-
-  // Wait for workflow (closed event with merged=true)
   await waitForWorkflow(ctx.github, pr.number, ctx.config.test.workflowTimeout);
-  
-  // Poll for status update and reaction (can take time for Discord to process)
-  let updatedMessage = await ctx.discord.getMessage(initialMessage!.id);
-  let attempts = 0;
-  const maxAttempts = 15; // 15 attempts * 2 seconds = 30 seconds max
-  while (attempts < maxAttempts && !updatedMessage.content.includes('Merged')) {
-    await wait(2000);
-    updatedMessage = await ctx.discord.getMessage(initialMessage!.id);
-    attempts++;
-  }
-  if (attempts >= maxAttempts) {
-    console.warn(`⚠️  Status not updated after ${maxAttempts * 2} seconds`);
+
+  const pollOpts = {
+    maxAttempts: ctx.config.test.discordStatusPollAttempts ?? 45,
+    intervalMs: ctx.config.test.discordPollInterval ?? 2000,
+  };
+  const { message: updatedMessage, matched } = await waitForDiscordUpdate(
+    () => ctx.discord.getMessage(initialMessage.id),
+    (m) => m.content.includes('Merged'),
+    pollOpts
+  );
+  if (!matched) {
+    console.warn(`⚠️  Status not updated after ${pollOpts.maxAttempts * (pollOpts.intervalMs / 1000)} seconds`);
   }
 
-  // Verify 🎉 reaction was added
+  cases.push({
+    name: 'Status updated to Merged',
+    passed: updatedMessage.content.includes('Merged'),
+    detail: updatedMessage.content.includes('Merged') ? undefined : `Poll timed out after ${pollOpts.maxAttempts * (pollOpts.intervalMs / 1000)}s`,
+  });
+
   const reactionCheck = verifyReaction(updatedMessage, '🎉', true);
-  if (!reactionCheck.passed) {
-    console.warn(`⚠️  Reaction check: ${reactionCheck.error}`);
-    // Still continue - reaction might take longer
-  }
+  cases.push({
+    name: '🎉 reaction on message',
+    passed: reactionCheck.passed,
+    detail: reactionCheck.error,
+  });
 
+  await wait(5000);
   const author = await ctx.github.getPRAuthor(pr.number);
   const formatCheck = verifyParentMessageFormat(
     updatedMessage,
@@ -1936,27 +2196,40 @@ async function test15PRMerged(ctx: TestContext): Promise<void> {
     },
     'Merged'
   );
-  if (!formatCheck.passed) {
-    console.error('❌ Final message formatting verification failed:');
-    formatCheck.errors.forEach((e) => {
-      console.error(`  - ${e}`);
-    });
-    console.log('\nActual message content:');
-    console.log('---');
-    console.log(updatedMessage.content);
-    console.log('---');
-    throw new Error(`Final message formatting verification failed:\n${formatCheck.errors.map((e) => `  - ${e}`).join('\n')}\n\nFinal message:\n${updatedMessage.content}`);
-  }
-  console.log('✓ Final message format verified');
-  await wait(5000);
+  cases.push({
+    name: 'Parent message format (Merged)',
+    passed: formatCheck.passed,
+    detail: formatCheck.errors.length ? formatCheck.errors.join('; ') : undefined,
+  });
 
   if (updatedMessage.thread) {
     const threadState = await verifyThreadState(ctx.discord, updatedMessage.thread.id, true, true);
-    expect(threadState.passed).toBe(true);
+    cases.push({
+      name: 'Thread locked and archived after merge',
+      passed: threadState.passed,
+      detail: threadState.error,
+    });
     const threadMessages = await ctx.discord.getThreadMessages(updatedMessage.thread.id, 10);
     const mergeMessage = threadMessages.find((msg) => msg.content.includes('merged'));
-    expect(mergeMessage).toBeDefined();
+    cases.push({
+      name: 'Thread merge message',
+      passed: !!mergeMessage,
+      detail: mergeMessage ? undefined : 'No "merged" message in thread',
+    });
+  } else {
+    cases.push({
+      name: 'Thread locked and archived after merge',
+      passed: false,
+      detail: 'No thread on message',
+    });
+    cases.push({
+      name: 'Thread merge message',
+      passed: false,
+      detail: 'No thread on message',
+    });
   }
+
+  reportVerificationResults('Test 15: PR Merged', cases);
   console.log('✅ Test 15 completed successfully!\n');
 }
 

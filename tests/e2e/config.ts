@@ -11,6 +11,12 @@ export interface E2EConfig {
     installationId?: number; // Optional - will be auto-discovered if not provided
     owner: string;
     repo: string;
+    // Optional separate auth for review operations (submit review, dismiss review).
+    // If not set, primary auth is used. Use a different identity so the reviewer can approve/request changes on PRs created by the primary identity.
+    reviewToken?: string;
+    reviewAppId?: number;
+    reviewAppPrivateKey?: string;
+    reviewInstallationId?: number;
   };
   discord: {
     botToken: string;
@@ -24,6 +30,10 @@ export interface E2EConfig {
     discordPollInterval: number;
     discordPollTimeout: number;
     reviewers?: string[]; // Optional test reviewers (GitHub usernames)
+    /** Username of the bot that submits reviews (e.g. discord-pr-e2e-review-operations). Used for status/thread verification when reviews are submitted via review auth. */
+    reviewBotUsername?: string;
+    /** Max poll attempts for Discord status updates (interval from discordPollInterval). */
+    discordStatusPollAttempts?: number;
   };
 }
 
@@ -86,6 +96,23 @@ export function loadConfig(): E2EConfig {
     }
   }
 
+  // Optional review auth (GITHUB_REVIEW_TOKEN or GITHUB_REVIEW_APP_*)
+  const reviewToken = getEnvVarOptional('GITHUB_REVIEW_TOKEN');
+  const reviewAppId = getEnvVarNumberOptional('GITHUB_REVIEW_APP_ID');
+  let reviewAppPrivateKey = getEnvVarOptional('GITHUB_REVIEW_APP_PRIVATE_KEY');
+  const reviewInstallationId = getEnvVarNumberOptional('GITHUB_REVIEW_APP_INSTALLATION_ID');
+
+  if (reviewAppPrivateKey && !reviewAppPrivateKey.includes('-----BEGIN')) {
+    try {
+      reviewAppPrivateKey = Buffer.from(reviewAppPrivateKey, 'base64').toString('utf-8');
+    } catch (error) {
+      throw new Error(
+        'GITHUB_REVIEW_APP_PRIVATE_KEY appears to be base64-encoded but could not be decoded. ' +
+        'Please provide either a raw PEM-formatted key or a valid base64-encoded key.'
+      );
+    }
+  }
+
   return {
     github: {
       token,
@@ -94,6 +121,10 @@ export function loadConfig(): E2EConfig {
       installationId,
       owner: getEnvVar('GITHUB_REPO_OWNER'),
       repo: getEnvVar('GITHUB_REPO_NAME'),
+      reviewToken,
+      reviewAppId,
+      reviewAppPrivateKey,
+      reviewInstallationId,
     },
     discord: {
       botToken: getEnvVar('DISCORD_BOT_TOKEN'),
@@ -109,6 +140,8 @@ export function loadConfig(): E2EConfig {
       reviewers: process.env.E2E_TEST_REVIEWERS
         ? process.env.E2E_TEST_REVIEWERS.split(',').map((r) => r.trim())
         : undefined,
+      reviewBotUsername: process.env.E2E_REVIEW_BOT_USERNAME || 'discord-pr-e2e-review-operations',
+      discordStatusPollAttempts: getEnvVarNumber('E2E_DISCORD_STATUS_POLL_ATTEMPTS', 45), // 45 * 2s = 90s default
     },
   };
 }

@@ -105,6 +105,20 @@ GitHub App is recommended for better security, scalability, and independence fro
   - Example: `reviewer1,reviewer2,reviewer3`
   - Required for tests 3, 5-12
 
+### Optional: Review Authentication (for tests 7–12)
+
+Tests that submit **approve** or **changes requested** (7, 8, 9, 10, 11, 12) require a **different** GitHub identity for review actions. The PR author cannot approve or request changes on their own PR.
+
+Configure **review auth** (PAT or a second GitHub App) used only for submitting and dismissing reviews:
+
+- **Option A – PAT**: `GITHUB_REVIEW_TOKEN` – a PAT for a user who is **not** the PR author (i.e. not the same as primary auth).
+- **Option B – Second GitHub App**: Create another GitHub App, install it on the repo, then set:
+  - `GITHUB_REVIEW_APP_ID`
+  - `GITHUB_REVIEW_APP_PRIVATE_KEY`
+  - `GITHUB_REVIEW_APP_INSTALLATION_ID` (optional; auto-discovered if omitted)
+
+If you omit review auth, those tests use the primary auth and will fail when they try to review their own PRs.
+
 ## Step 4: Verify Configuration
 
 After running the setup script, check your `.env` file:
@@ -182,6 +196,11 @@ npm run test:e2e:cleanup
 - Check that the Discord PR Notifications workflow is enabled in your repository
 - Verify the workflow file exists at `.github/workflows/discord-pr-notifications.yaml`
 - Check GitHub Actions tab for workflow runs
+
+### Review tests (7–12) fail: "author can't review own PR"
+- Configure **review auth** so a different identity submits reviews (see "Review Authentication" above).
+- Use `GITHUB_REVIEW_TOKEN` (PAT for another user) or a second GitHub App (`GITHUB_REVIEW_APP_*`).
+- Ensure the review identity is **not** the same as the one that creates PRs.
 
 ## Next Steps
 

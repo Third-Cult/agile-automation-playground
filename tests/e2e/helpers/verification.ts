@@ -597,7 +597,8 @@ export function verifyPROpenedDraftFormat(
 export function verifyStatusLine(
   message: DiscordMessage | null,
   expectedStatus: 'Ready for Review' | 'Draft - In Progress' | 'Approved' | 'Changes Requested' | 'Closed' | 'Merged',
-  reviewer?: string
+  /** Reviewer(s) that may appear in status - e.g. human reviewer or bot (discord-pr-e2e-review-operations) */
+  reviewer?: string | string[]
 ): { passed: boolean; errors: string[] } {
   const errors: string[] = [];
 
@@ -637,10 +638,14 @@ export function verifyStatusLine(
       if (!statusLine.includes('Approved')) {
         errors.push(`Status line should contain "Approved", Got: "${statusLine}"`);
       }
-      // If reviewer is specified, check that it's mentioned (might be Discord ID)
+      // If reviewer(s) specified, at least one must be mentioned (human or bot, might be Discord ID)
       if (reviewer) {
-        if (!statusLine.includes(reviewer) && !statusLine.includes(`@${reviewer}`) && !statusLine.includes('<@')) {
-          errors.push(`Status line should mention reviewer "${reviewer}", Got: "${statusLine}"`);
+        const reviewers = Array.isArray(reviewer) ? reviewer : [reviewer];
+        const hasMention = reviewers.some(
+          (r) => statusLine.includes(r) || statusLine.includes(`@${r}`) || statusLine.includes('<@')
+        );
+        if (!hasMention) {
+          errors.push(`Status line should mention one of [${reviewers.join(', ')}], Got: "${statusLine}"`);
         }
       }
       break;
@@ -648,10 +653,14 @@ export function verifyStatusLine(
       if (!statusLine.includes('Changes Requested')) {
         errors.push(`Status line should contain "Changes Requested", Got: "${statusLine}"`);
       }
-      // If reviewer is specified, check that it's mentioned (might be Discord ID)
+      // If reviewer(s) specified, at least one must be mentioned (human or bot, might be Discord ID)
       if (reviewer) {
-        if (!statusLine.includes(reviewer) && !statusLine.includes(`@${reviewer}`) && !statusLine.includes('<@')) {
-          errors.push(`Status line should mention reviewer "${reviewer}", Got: "${statusLine}"`);
+        const reviewers = Array.isArray(reviewer) ? reviewer : [reviewer];
+        const hasMention = reviewers.some(
+          (r) => statusLine.includes(r) || statusLine.includes(`@${r}`) || statusLine.includes('<@')
+        );
+        if (!hasMention) {
+          errors.push(`Status line should mention one of [${reviewers.join(', ')}], Got: "${statusLine}"`);
         }
       }
       break;
@@ -709,7 +718,8 @@ export function verifyParentMessageFormat(
     reviewers?: string[];
   },
   expectedStatus: ExpectedStatus,
-  reviewerForStatus?: string
+  /** Reviewer(s) that may appear in status - e.g. human reviewer or bot (discord-pr-e2e-review-operations) */
+  reviewerForStatus?: string | string[]
 ): { passed: boolean; errors: string[] } {
   const errors: string[] = [];
   if (!message) {
@@ -824,4 +834,42 @@ export function verifyReviewerMention(
   }
 
   return { passed: true };
+}
+
+/**
+ * A single verification case for reporting.
+ */
+export interface VerificationCase {
+  name: string;
+  passed: boolean;
+  detail?: string;
+}
+
+/**
+ * Log a thorough report of all verification cases and their results.
+ * If any case failed, throws an Error with all failure details.
+ * Use this so tests report every case tested and every failure, not just the first.
+ */
+export function reportVerificationResults(
+  testName: string,
+  cases: VerificationCase[],
+  options?: { throwOnFailure?: boolean }
+): void {
+  const passed = cases.filter((c) => c.passed);
+  const failed = cases.filter((c) => !c.passed);
+
+  console.log(`\n--- Verification Report: ${testName} ---`);
+  for (const c of cases) {
+    const icon = c.passed ? '✓' : '✗';
+    const detail = c.detail && !c.passed ? ` — ${c.detail}` : '';
+    console.log(`  ${icon} ${c.name}${detail}`);
+  }
+  console.log(`  Total: ${passed.length}/${cases.length} passed\n`);
+
+  if (failed.length > 0 && (options?.throwOnFailure !== false)) {
+    throw new Error(
+      `Verification failed (${failed.length}/${cases.length}):\n` +
+        failed.map((c) => `  - ${c.name}${c.detail ? `: ${c.detail}` : ''}`).join('\n')
+    );
+  }
 }

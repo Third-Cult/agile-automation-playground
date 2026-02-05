@@ -27,7 +27,8 @@ E2E tests verify that the system works correctly by interacting with live GitHub
        - Actions: Read
      - Must have write access to the test repository
 4. **Discord Bot Token**: Bot token for the Discord bot
-5. **Test Reviewers** (optional): GitHub usernames for testing reviewer scenarios (not needed with GitHub App)
+5. **Test Reviewers** (optional): GitHub usernames for tests 3, 5–12. Comma-separated list.
+6. **Review auth** (optional): Separate identity for review tests 7–12. See "Dual authentication for review tests" below.
 
 ## Environment Setup
 
@@ -70,11 +71,23 @@ E2E_TIMEOUT=300000
 E2E_WORKFLOW_TIMEOUT=300000
 E2E_DISCORD_POLL_INTERVAL=2000
 E2E_DISCORD_POLL_TIMEOUT=120000
+E2E_DISCORD_STATUS_POLL_ATTEMPTS=45  # 45 × 2s = 90s for status updates
+
+# Optional: Review bot username (when using review auth, status shows bot as approver)
+# E2E_REVIEW_BOT_USERNAME=discord-pr-e2e-review-operations
 
 # Optional: Test reviewers (comma-separated GitHub usernames)
-# Required for tests 3, 5-12 (when using PAT authentication)
-# Not needed with GitHub App - app can submit reviews directly
+# Required for tests 3, 5-12
 # E2E_TEST_REVIEWERS=reviewer1,reviewer2,reviewer3
+
+# Optional: Separate auth for review operations (tests 7-12: approve, changes requested, etc.)
+# PR author cannot review own PR. Use a different identity for reviews.
+# Option A: PAT for a different user
+# GITHUB_REVIEW_TOKEN=ghp_...
+# Option B: Second GitHub App (create another app, install on repo)
+# GITHUB_REVIEW_APP_ID=987654
+# GITHUB_REVIEW_APP_PRIVATE_KEY=-----BEGIN RSA PRIVATE KEY-----\n...
+# GITHUB_REVIEW_APP_INSTALLATION_ID=87654321  # Optional - auto-discovered if omitted
 ```
 
 ### 3. GitHub App Setup (Recommended)
@@ -125,7 +138,18 @@ If using GitHub App authentication (recommended), follow these steps:
 - ✅ **Better security**: Repository-scoped permissions
 - ✅ **Scalable**: Higher rate limits (5,000+ requests/hour)
 - ✅ **Auto-refreshing tokens**: No manual token management
-- ✅ **Can submit reviews**: App can approve/request changes on PRs
+
+#### Dual authentication for review tests (7–12)
+
+GitHub does not allow a PR author to approve or request changes on their own PR. E2E tests use **primary auth** to create PRs; tests that submit reviews (approve, request changes, comment, dismiss) need a **separate identity** for those actions.
+
+- **Primary auth** (`GITHUB_TOKEN` or `GITHUB_APP_*`): Creates PRs, branches, commits, merges, closes.
+- **Review auth** (optional): `GITHUB_REVIEW_TOKEN` or `GITHUB_REVIEW_APP_*`. Used only for `submitReview` and `dismissReview`. If not set, primary auth is used (review tests will fail when the author is the same as the reviewer).
+
+**To enable review tests:**
+
+1. **Option A – PAT**: Create a PAT for a **different** user (e.g. a second account or bot user). Set `GITHUB_REVIEW_TOKEN`. The primary auth creates PRs; the review PAT submits reviews.
+2. **Option B – Second GitHub App**: Create another GitHub App (e.g. "E2E Review Bot"), install it on the same repo, and set `GITHUB_REVIEW_APP_ID`, `GITHUB_REVIEW_APP_PRIVATE_KEY`, and optionally `GITHUB_REVIEW_APP_INSTALLATION_ID`. Use the first app for PR creation and the second for reviews.
 
 ### 4. GitHub Secrets
 
@@ -245,6 +269,16 @@ Tests automatically clean up PRs and branches after execution. If cleanup fails 
 - Verify reviewers are valid GitHub usernames
 - Check reviewers have access to the repository
 
+### Review tests (7–12): "author can't review own PR"
+
+- Configure **review authentication** so a different identity performs approve/changes requested. See "Dual authentication for review tests" above.
+- Set `GITHUB_REVIEW_TOKEN` (PAT for another user) or `GITHUB_REVIEW_APP_*` (second GitHub App).
+- Ensure the review identity is **not** the same as the identity that creates PRs.
+
+### Status line shows bot instead of human reviewer
+
+When using review auth (e.g., `discord-pr-e2e-review-operations` bot), the Discord status line will mention the bot as the approver/requester, not the human reviewer from `E2E_TEST_REVIEWERS`. The tests accept either via `E2E_REVIEW_BOT_USERNAME` (default: `discord-pr-e2e-review-operations`). If your bot has a different username, set this env var.
+
 ## Best Practices
 
 1. **Use a Dedicated Test Repository**: Avoid running E2E tests on production repositories
@@ -263,6 +297,24 @@ E2E tests can be integrated into CI/CD pipelines:
 - Use separate test repository for CI
 
 See `.github/workflows/e2e-tests.yaml` for example CI workflow.
+
+## Polling vs Event-Based Triggers
+
+E2E tests use **polling** rather than event-driven handshakes because:
+
+1. **Architecture**: Tests run in a Node process (locally or CI); workflows run on GitHub Actions. There is no direct callback mechanism without modifying the workflow.
+2. **Workflow completion**: Tests first wait for `waitForWorkflow()` (polls GitHub API for workflow run completion). This indicates the handler has run.
+3. **Discord propagation**: After the workflow completes, there can be additional latency before Discord reflects the update. Tests use `waitForDiscordUpdate()` to poll with configurable attempts and interval.
+
+**Tuning for flaky timeouts:**
+
+- Increase `E2E_DISCORD_STATUS_POLL_ATTEMPTS` (default 45 = 90s at 2s interval)
+- Increase `E2E_DISCORD_POLL_INTERVAL` if you hit rate limits (but tests will run longer)
+- Increase `E2E_WORKFLOW_TIMEOUT` for slow CI runners
+
+**Event-based alternative (requires workflow changes):**
+
+To move to an event-driven approach, you would need to modify the Discord PR Notifications workflow to signal completion (e.g., add a PR comment like `<!-- E2E_SIGNAL -->` when done). Tests could then poll PR comments for that marker before checking Discord. This is not implemented in the current test-only scope.
 
 ## Limitations
 

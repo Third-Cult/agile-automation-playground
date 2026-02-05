@@ -1,6 +1,6 @@
 import { Octokit } from '@octokit/rest';
 import type { E2EConfig } from '../config';
-import { createAuthenticatedOctokit } from './github-app-auth';
+import { createAuthenticatedOctokit, createReviewAuthenticatedOctokit } from './github-app-auth';
 
 export interface PRInfo {
   number: number;
@@ -29,13 +29,23 @@ export interface ReviewInfo {
 
 export class GitHubClient {
   private octokit: Octokit;
+  private reviewOctokit: Octokit | null;
   private owner: string;
   private repo: string;
 
-  private constructor(octokit: Octokit, owner: string, repo: string) {
+  private constructor(octokit: Octokit, owner: string, repo: string, reviewOctokit: Octokit | null = null) {
     this.octokit = octokit;
+    this.reviewOctokit = reviewOctokit;
     this.owner = owner;
     this.repo = repo;
+  }
+
+  /**
+   * Octokit for review operations (submit review, dismiss review). Uses separate identity
+   * when review auth is configured, otherwise primary auth.
+   */
+  private octokitForReviews(): Octokit {
+    return this.reviewOctokit ?? this.octokit;
   }
 
   /**
@@ -43,7 +53,8 @@ export class GitHubClient {
    */
   static async create(config: E2EConfig): Promise<GitHubClient> {
     const octokit = await createAuthenticatedOctokit(config.github);
-    return new GitHubClient(octokit, config.github.owner, config.github.repo);
+    const reviewOctokit = await createReviewAuthenticatedOctokit(config.github);
+    return new GitHubClient(octokit, config.github.owner, config.github.repo, reviewOctokit);
   }
 
   /**
@@ -238,12 +249,11 @@ export class GitHubClient {
 
   /**
    * Submit a review
-   * 
-   * Note: This method uses the GitHub App's authentication, so the review will be
-   * submitted by the app bot, not by a specific user. This is intentional for e2e tests
-   * - reviewers are assigned using real GitHub usernames (for Discord mapping),
-   * - but review actions (approve, request changes, comment) are performed by the app.
-   * 
+   *
+   * Uses review auth when configured (GITHUB_REVIEW_TOKEN or GITHUB_REVIEW_APP_*), so a
+   * different identity can approve/request changes on PRs created by the primary auth.
+   * Otherwise uses primary auth (backward compatible).
+   *
    * @returns ReviewInfo including the login of the user/app that submitted the review
    */
   async submitReview(
@@ -251,7 +261,8 @@ export class GitHubClient {
     state: 'APPROVE' | 'REQUEST_CHANGES' | 'COMMENT',
     body?: string
   ): Promise<ReviewInfo> {
-    const { data } = await this.octokit.pulls.createReview({
+    const api = this.octokitForReviews();
+    const { data } = await api.pulls.createReview({
       owner: this.owner,
       repo: this.repo,
       pull_number: prNumber,
@@ -273,7 +284,8 @@ export class GitHubClient {
    * Dismiss a review
    */
   async dismissReview(prNumber: number, reviewId: number, message: string): Promise<void> {
-    await this.octokit.pulls.dismissReview({
+    const api = this.octokitForReviews();
+    await api.pulls.dismissReview({
       owner: this.owner,
       repo: this.repo,
       pull_number: prNumber,

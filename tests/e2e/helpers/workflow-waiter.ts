@@ -97,3 +97,23 @@ export async function waitFor(
 
   return false;
 }
+
+/**
+ * Poll for Discord message content change (e.g. status update).
+ * Uses configurable attempts and interval to handle variable latency.
+ * Returns the final message after polling completes (whether condition matched or timed out).
+ */
+export async function waitForDiscordUpdate<T>(
+  getMessage: () => Promise<T>,
+  condition: (msg: T) => boolean,
+  opts: { maxAttempts: number; intervalMs: number } = { maxAttempts: 45, intervalMs: 2000 }
+): Promise<{ message: T; matched: boolean }> {
+  let message = await getMessage();
+  let attempts = 0;
+  while (attempts < opts.maxAttempts && !condition(message)) {
+    await wait(opts.intervalMs);
+    message = await getMessage();
+    attempts++;
+  }
+  return { message, matched: condition(message) };
+}

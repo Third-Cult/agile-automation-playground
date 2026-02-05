@@ -118,3 +118,73 @@ export async function createAuthenticatedOctokit(config: E2EConfig['github']): P
     'No authentication method configured. Provide either GITHUB_TOKEN or GitHub App configuration.'
   );
 }
+
+/**
+ * Create an authenticated Octokit instance for review operations using the review GitHub App.
+ * Uses reviewAppId, reviewAppPrivateKey, reviewInstallationId from config.
+ */
+export async function createReviewAppOctokit(config: E2EConfig['github']): Promise<Octokit> {
+  if (!config.reviewAppId || !config.reviewAppPrivateKey) {
+    throw new Error('Review GitHub App configuration is incomplete. reviewAppId and reviewAppPrivateKey are required.');
+  }
+
+  const appAuth = createAppAuth({
+    appId: config.reviewAppId,
+    privateKey: config.reviewAppPrivateKey,
+  });
+
+  let installationId = config.reviewInstallationId;
+  if (!installationId) {
+    console.log(`🔍 Auto-discovering review app installation ID for ${config.owner}/${config.repo}...`);
+    installationId = await getInstallationId(appAuth, config.owner, config.repo);
+    console.log(`✓ Found review app installation ID: ${installationId}`);
+  }
+
+  const installationAuth = await appAuth({
+    type: 'installation',
+    installationId,
+  });
+
+  return new Octokit({
+    auth: installationAuth.token,
+  });
+}
+
+/**
+ * Create an authenticated Octokit instance for review operations (submit review, dismiss review).
+ * Uses GITHUB_REVIEW_TOKEN or GITHUB_REVIEW_APP_* config. If neither is set, returns null
+ * (caller should fall back to primary auth).
+ */
+export async function createReviewAuthenticatedOctokit(config: E2EConfig['github']): Promise<Octokit | null> {
+  const hasReviewPAT = !!config.reviewToken;
+  const hasReviewApp = !!(config.reviewAppId && config.reviewAppPrivateKey);
+
+  if (!hasReviewPAT && !hasReviewApp) {
+    return null;
+  }
+
+  if (hasReviewApp) {
+    try {
+      return await createReviewAppOctokit(config);
+    } catch (error: any) {
+      const errorMessage = error.message || String(error);
+      let maskedMessage = errorMessage;
+      if (config.reviewAppPrivateKey) {
+        const keySnippet = config.reviewAppPrivateKey.slice(0, Math.min(20, config.reviewAppPrivateKey.length));
+        maskedMessage = maskedMessage.replace(
+          new RegExp(keySnippet.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'),
+          maskSensitive(keySnippet)
+        );
+      }
+      if (config.reviewAppId) {
+        maskedMessage = maskedMessage.replace(
+          new RegExp(String(config.reviewAppId), 'g'),
+          maskSensitive(String(config.reviewAppId))
+        );
+      }
+      throw new Error(`Review GitHub App authentication failed: ${maskedMessage}`);
+    }
+  }
+
+  return new Octokit({ auth: config.reviewToken });
+}
